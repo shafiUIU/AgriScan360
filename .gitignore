@@ -1,44 +1,51 @@
-# Byte-compiled / optimized / DLL files
+# ── Python cache ──────────────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
-*$py.class
-
-# C extensions
-*.so
-
-# Distribution / packaging
+*.pyo
+*.pyd
 .Python
-env/
+
+# ── Virtual environments ───────────────────────────────────────────────────────
+.venv/
 venv/
+env/
 ENV/
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
 
-# Inspection captures (large image dumps)
-captured_scans/
-*.jpg
-*.jpeg
-*.png
+# ── Database (SQLite file — do not commit, can be large) ──────────────────────
+laptop_server/db/*.db
+laptop_server/db/*.db-shm
+laptop_server/db/*.db-wal
 
-# Editor / IDE configurations
-.vscode/
+# ── Scan images (can be hundreds of MBs) ──────────────────────────────────────
+laptop_server/static/scans/
+
+# ── AI model files (large binary) ─────────────────────────────────────────────
+laptop_server/model/*.onnx
+laptop_server/model/*.pt
+laptop_server/model/*.tflite
+
+# ── OS / IDE ──────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
 .idea/
+.vscode/
 *.swp
 *.swo
 
-# OS generated files
-.DS_Store
-Thumbs.db
+# ── Environment / secrets ──────────────────────────────────────────────────────
+.env
+.env.*
+*.secret
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── Build artifacts ────────────────────────────────────────────────────────────
+dist/
+build/
+*.egg-info/
+
+# ── Jupyter ────────────────────────────────────────────────────────────────────
+.ipynb_checkpoints/

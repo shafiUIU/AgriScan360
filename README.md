@@ -1,199 +1,280 @@
-# AgriScan 360 🍎🔍
+<div align="center">
 
-**An AI-Assisted 360° Multi-Spectral Fruit & Vegetable Quality Inspection Station**  
-*Microprocessors and Microcontrollers Laboratory (CSE 4326) — United International University (UIU)*
+# 🌿 AgriScan 360
 
----
+**Multi-Spectral 360° Produce Freshness Classification System**
 
-## 📌 Project Overview
+[![UIU](https://img.shields.io/badge/University-United_International_University-blue?style=flat-square)](https://www.uiu.ac.bd/)
+[![Course](https://img.shields.io/badge/Course-CSE_4326_Microprocessors_Lab-purple?style=flat-square)]()
+[![Stage](https://img.shields.io/badge/Build-Stage_1_Active-green?style=flat-square)]()
+[![Python](https://img.shields.io/badge/Python-3.11+-yellow?style=flat-square&logo=python)]()
+[![FastAPI](https://img.shields.io/badge/Backend-FastAPI-teal?style=flat-square&logo=fastapi)]()
 
-**AgriScan 360** is a standalone, multi-modal quality inspection station engineered to detect external and internal produce defects without cutting or destroying the fruit. 
+*Autonomous produce inspection chamber using RGB imaging, 365nm UV-A fluorescence, and BME688 VOC gas sensing*
 
-Housed inside a light-tight, matte-black inspection chamber, the system combines:
-1. **360° Multi-Angle Computer Vision:** An 8-stop motorized turntable rotates produce in front of a Raspberry Pi Camera Module 2.
-2. **Dual-Spectrum Illumination:** Synchronized White LED (visible surface rot) and 365 nm UV-A LED (fungal/aflatoxin fluorescence).
-3. **Electrochemical Gas Sensing:** A Bosch BME688 MOX gas sensor measures Volatile Organic Compounds (VOCs), ethanol, and ethylene to detect deep internal rot, core decay, and fruit borer damage that cameras cannot see.
-4. **On-Device Multi-Modal AI Fusion:** Fuses visual and chemical data on a Raspberry Pi 5 to classify produce as `HEALTHY`, `ROTTEN`, or `UNCERTAIN`.
-5. **Dual Output (Physical + IoT):** Displays instant results on an on-device SSD1306 OLED screen and broadcasts live telemetry over local Wi-Fi via a Flask web dashboard.
+</div>
 
 ---
 
-## 🔬 The 3 Pillars of Detection
+## 🏗️ System Architecture
 
-| Inspection Pillar | Hardware Component | Physical Mechanism | Targeted Defects |
-|---|---|---|---|
-| **1. Surface Vision** | RPi Camera Module 2 + White LED (Diffused) | True-color surface reflectance across 8 angles (360°) | Visible skin rot, browning, bruising, necrosis, surface wrinkling, calyx/stem freshness |
-| **2. Fungal Fluorescence** | RPi Camera Module 2 + 365 nm UV-A LED | Optical fluorescence of fungal metabolites & aflatoxins | Early-stage mould colonies, fungal mycelium, rot hidden in crevices or under calyx |
-| **3. Chemical / Internal** | Bosch BME688 AI Gas Sensor | Metal-Oxide Semiconductor (MOX) VOC resistance drop | Internal core rot, fruit borer larvae (*Leucinodes orbonalis*), anaerobic fermentation gases |
+```
+┌─────────────────────────────────┐       Wi-Fi LAN       ┌──────────────────────────────────────┐
+│      RASPBERRY PI 5  (Edge)     │  ───────────────────▶  │       LAPTOP  (AI Server)            │
+│                                 │   HTTP POST /api/scan   │                                      │
+│  • NEMA 17 Stepper + A4988      │   16 images + gas data  │  • FastAPI + Uvicorn (port 8000)     │
+│  • White LED Array (IRLZ44N)    │                         │  • SQLite via SQLAlchemy ORM         │
+│  • 365nm UV-A Array (IRLZ44N)   │  ◀───────────────────   │  • AI Classifier (rule-based→ONNX)   │
+│  • RPi Camera Module 2 (8MP)    │   JSON result           │  • WebSocket live dashboard push     │
+│  • BME688 Gas Sensor (I2C)      │                         │  • Web dashboard at localhost:8000   │
+│  • SSD1306 OLED 0.96" (I2C)    │                         │                                      │
+└─────────────────────────────────┘                         └──────────────────────────────────────┘
+```
 
----
+## 🔬 Three Detection Pillars
 
-## 🛠️ Hardware Bill of Materials (BOM)
+| Pillar | Sensor | What It Detects |
+|--------|--------|-----------------|
+| **1 — RGB Surface** | Camera + White LEDs | Browning, necrosis, bruising, calyx decay |
+| **2 — UV Fluorescence** | Camera + 365nm UV-A | Fungal mould (glows green/yellow), aflatoxin |
+| **3 — Gas / VOC** | BME688 | Internal rot, core decay, ethylene, ethanol emission |
 
-| Component | Specification | Quantity | Role in System |
-|---|---|:---:|---|
-| **Raspberry Pi 5** | 4GB / 8GB RAM, 64-bit OS | 1 | Master compute, GPIO orchestration, AI inference, Flask server |
-| **RPi Camera Module 2** | Sony IMX219, 8 MP RGB, CSI-2 | 1 | High-resolution multi-spectral optical capture |
-| **Bosch BME688** | I2C (0x77 / 0x76), MOX Gas/T/H/P | 1 | Chamber headspace gas sensing for internal rot detection |
-| **NEMA 17 Stepper Motor** | `4S42Q-P0404S` (1.8°/step, 200 steps/rev) | 1 | Drives rotating turntable in precise 45° increments |
-| **A4988 Stepper Driver** | Microstepping bipolar motor driver | 1 | Translates STEP/DIR pulses to motor coil phases |
-| **IRLZ44N MOSFETs** | Logic-level N-Channel MOSFETs | 2 | GPIO-controlled electronic switches for White & UV lights |
-| **White LED Array** | 5V / 12V High-CRI LED chunk + Diffuser | 1 | Shadow-free visible surface lighting |
-| **365 nm UV-A LED Array** | 365 nm Ultraviolet LED chunk | 1 | Excitation source for fungal fluorescence |
-| **SSD1306 OLED Display** | 0.96", 128×64, I2C (0x3C) | 1 | Standalone physical result display |
-| **Turntable Plate & Hub** | 3.5" radius (7" diameter), PLA+ / Acrylic | 1 | Rotating platform supporting the fruit |
-| **Inspection Chamber** | L: 17", W: 11", H: 9" (Matte-Black) | 1 | Light-isolated and gas-controlled scanning environment |
-| **12V DC Power Supply** | 12V, 2A–3A Regulated | 1 | Dedicated motor power (VMOT) and LED rail |
-| **Official 27W USB-C PSU** | 5V, 5A DC | 1 | Clean, isolated power for Raspberry Pi 5 |
+> **One scan = 16 frames** (8 RGB × 8 angles + 8 UV × 8 angles) at 45° increments for full 360° coverage.
 
 ---
 
-## ⚡ Wiring & Pinout Tables
-
-### 1. Stepper Motor (A4988 to Raspberry Pi 5 & 12V Supply)
-| A4988 Driver Pin | Connects To | Pin Number / Location | Function |
-|---|---|:---:|---|
-| **STEP** | Raspberry Pi GPIO 17 | Physical Pin 11 | Step pulse input |
-| **DIR** | Raspberry Pi GPIO 27 | Physical Pin 13 | Direction control |
-| **ENABLE** | Raspberry Pi GPIO 22 | Physical Pin 15 | Active LOW coil enable |
-| **VDD** | Raspberry Pi 3.3V | Physical Pin 1 | Logic power |
-| **GND (Logic)** | Raspberry Pi GND | Physical Pin 6 | Logic ground |
-| **RST & SLP** | **Bridge Together** | Jumper wire across pins | Disables chip sleep mode |
-| **VMOT** | External 12V Power (+) | 12V Adapter Positive | Motor power rail |
-| **GND (Power)** | External 12V Power (-) | 12V Adapter Negative | **Must connect to Pi GND!** |
-| **1A, 1B, 2A, 2B** | Motor Pins 1, 3, 4, 6 | 4S42Q-P0404S Socket | Motor coil phase connections |
-
-### 2. Dual Lights (IRLZ44N MOSFET Low-Side Switches)
-| MOSFET Unit | Gate (Pin 1) | Drain (Pin 2) | Source (Pin 3) |
-|---|---|---|---|
-| **MOSFET #1 (White)** | RPi GPIO 18 *(Physical Pin 12)* | White LED Chunk **Negative (-)** | Common Ground (GND) |
-| **MOSFET #2 (UV 365nm)** | RPi GPIO 24 *(Physical Pin 18)* | UV LED Chunk **Negative (-)** | Common Ground (GND) |
-* *Note: Positive (+) wire of both LED chunks connects directly to the Power Supply (+) rail.*
-
-### 3. I2C Bus Devices (BME688 & SSD1306 OLED)
-| Device Pin | Connects To (Raspberry Pi 5) | Physical Pin # | Function |
-|---|---|:---:|---|
-| **VCC / VIN** | Raspberry Pi 3.3V | Physical Pin 1 | Power supply |
-| **GND** | Raspberry Pi GND | Physical Pin 9 / 14 | Ground |
-| **SDA** | Raspberry Pi GPIO 2 (SDA) | Physical Pin 3 | I2C Data line (shared) |
-| **SCL** | Raspberry Pi GPIO 3 (SCL) | Physical Pin 5 | I2C Clock line (shared) |
-
----
-
-## 📁 Repository Structure
+## 📁 Project Structure
 
 ```
 AgriScan360/
-├── config.py                 # Central configurations, pinouts, and thresholds
-├── motor.py                  # NEMA 17 stepper controller (45° steps, soft stop)
-├── lights.py                 # Dual light switching via IRLZ44N MOSFETs
-├── gas_sensor.py             # BME688 baseline calibration & VOC delta measurement
-├── camera.py                 # Picamera2 / OpenCV synchronized frame capture
-├── display.py                # SSD1306 OLED rendering module
-├── ai_classifier.py          # Multi-modal decision fusion engine (Vision + Gas)
-├── web_server.py             # Flask IoT web dashboard (Port 5000)
-├── main.py                   # Master system orchestrator
-├── test_bme688.py            # Standalone unit test for BME688 gas sensor
-├── test_dual_lights.py       # Standalone alternating test for White & UV LEDs
-├── run_stepper_continuous.py # Standalone test for continuous motor rotation
-├── requirements.txt          # Python dependencies list
-├── .gitignore                # Git ignore rules for bytecode & scan images
-└── README.md                 # Project documentation
+│
+├── pi_client/                  ← Runs on Raspberry Pi 5
+│   ├── config.py               GPIO pins, server URL, motor/camera settings
+│   ├── motor.py                NEMA 17 + A4988 stepper controller
+│   ├── lights.py               White + UV-A LED switching via IRLZ44N
+│   ├── gas_sensor.py           BME688 I2C driver + baseline/delta analysis
+│   ├── camera.py               Picamera2 controller (RGB + UV pair capture)
+│   ├── display.py              SSD1306 OLED I2C driver
+│   ├── uploader.py             HTTP multipart POST client → laptop server
+│   ├── main.py                 Master scan orchestrator
+│   └── requirements_pi.txt
+│
+├── laptop_server/              ← Runs on your Laptop (Windows/Linux/Mac)
+│   ├── main_server.py          FastAPI app entry point + WebSocket manager
+│   ├── config.py               Server host, DB path, AI thresholds
+│   ├── database.py             SQLAlchemy SQLite engine + session
+│   ├── models.py               ORM: Scan + ScanImage tables
+│   ├── schemas.py              Pydantic request/response schemas
+│   ├── ai_engine.py            Multi-modal classifier (rule-based + ONNX slot)
+│   ├── routers/
+│   │   ├── scan.py             POST /api/scan
+│   │   └── history.py          GET /api/history, /api/scan/{id}, /api/stats, DELETE
+│   ├── static/
+│   │   ├── index.html          Industrial Bio-Tech Dark dashboard
+│   │   ├── css/style.css       Full custom dark theme + animations
+│   │   ├── js/app.js           WebSocket client + API calls + table rendering
+│   │   └── scans/              Scan images saved here: scans/{scan_id}/
+│   ├── db/
+│   │   └── agriscan360.db      SQLite database (auto-created on first run)
+│   └── requirements_laptop.txt
+│
+├── start_server.bat            One-click laptop server launcher (Windows)
+├── start_pi.sh                 One-click Pi client launcher (Linux/RPi OS)
+├── .gitignore
+└── README.md
 ```
 
 ---
 
-## 🚀 Getting Started & Installation
+## ⚡ Quick Start
 
-### 1. Enable Hardware Interfaces on Raspberry Pi 5
-Open the terminal on your Raspberry Pi:
+### Step 1 — Start the Laptop Server
+
 ```bash
-sudo raspi-config
-```
-* Navigate to **Interface Options** $\rightarrow$ Enable **I2C**.
-* Navigate to **Interface Options** $\rightarrow$ Enable **Camera**.
-* Reboot if prompted.
+# On your Windows laptop:
+cd "path\to\AgriScan360"
+start_server.bat
 
-### 2. Clone the Repository
+# Or manually:
+cd laptop_server
+pip install -r requirements_laptop.txt
+python -m uvicorn main_server:app --host 0.0.0.0 --port 8000 --reload
+```
+
+Open **http://localhost:8000** in your browser → Dashboard appears.
+
+### Step 2 — Configure the Pi
+
+Edit `pi_client/config.py` and set your laptop's LAN IP:
+```python
+LAPTOP_SERVER_URL = "http://192.168.1.XXX:8000"   # ← Your laptop's IP from ipconfig
+```
+
+> Run `ipconfig` on your laptop and find the **IPv4 Address** under your Wi-Fi adapter.
+
+### Step 3 — Start the Pi Client
+
 ```bash
-git clone https://github.com/your-username/AgriScan360.git
-cd AgriScan360
+# On the Raspberry Pi:
+cd /path/to/AgriScan360
+bash start_pi.sh
+
+# Or manually:
+cd pi_client
+pip install -r requirements_pi.txt
+python main.py
 ```
 
-### 3. Install System & Python Dependencies
-```bash
-# Update system package repository
-sudo apt update
+### Step 4 — Run a Scan
 
-# Install hardware backend drivers and packages
-sudo apt install -y python3-gpiozero python3-lgpio python3-smbus i2c-tools python3-pip
+1. Select produce type (Tomato, Banana, etc.)
+2. The Pi calibrates BME688 gas baseline (empty chamber)
+3. Place fruit on the turntable → press **Enter**
+4. Motor rotates 8× 45° → camera captures 16 images
+5. Images + gas data POST to laptop → AI classifies → result appears on OLED + dashboard
 
-# Install Python packages
-pip install -r requirements.txt --break-system-packages
+---
+
+## 🔌 Hardware Pin Reference
+
+### A4988 Stepper Driver → Raspberry Pi 5
+
+| A4988 Signal | Pi GPIO (BCM) | Pi Physical Pin |
+|---|---|---|
+| STEP | GPIO 17 | Pin 11 |
+| DIR | GPIO 27 | Pin 13 |
+| ENABLE | GPIO 22 | Pin 15 |
+| RST + SLP | Bridge together | — |
+| VMOT | 12V PSU (+) | — |
+| GND (motor) | 12V PSU (−) + Pi GND | — |
+
+### IRLZ44N MOSFETs → Raspberry Pi 5
+
+| LED Array | Gate (GPIO BCM) | Physical Pin |
+|---|---|---|
+| White LED Array | GPIO 18 | Pin 12 |
+| 365nm UV-A Array | GPIO 24 | Pin 18 |
+
+> **Wiring:** LED (+) → Power rail · LED (−) → Drain · Gate → GPIO + 10kΩ pull-down · Source → GND
+
+### I2C Devices (shared bus)
+
+| Device | SDA | SCL | I2C Address |
+|---|---|---|---|
+| BME688 Gas Sensor | GPIO 2 (Pin 3) | GPIO 3 (Pin 5) | `0x77` |
+| SSD1306 OLED 0.96" | GPIO 2 (Pin 3) | GPIO 3 (Pin 5) | `0x3C` |
+
+### NEMA 17 Motor (6-pin socket → A4988)
+
+| Pin | A4988 Terminal |
+|---|---|
+| Pin 1 (leftmost) | 1A |
+| Pin 2 | Skip/Empty |
+| Pin 3 | 1B |
+| Pin 4 | 2A |
+| Pin 5 | Skip/Empty |
+| Pin 6 (rightmost) | 2B |
+
+---
+
+## 🌐 API Reference
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/` | Web dashboard |
+| `GET` | `/api/health` | Server health check (called by Pi on startup) |
+| `POST` | `/api/scan` | Ingest scan (multipart: 16 images + gas data) |
+| `GET` | `/api/history` | Paginated scan history (`?page=1&limit=20&produce=Tomato&status=ROTTEN`) |
+| `GET` | `/api/scan/{id}` | Full scan detail with all 16 image URLs |
+| `GET` | `/api/stats` | Aggregated stats (total, healthy%, rotten%, produce breakdown) |
+| `DELETE` | `/api/scan/{id}` | Delete scan record + image files |
+| `WS` | `/ws/live` | WebSocket — real-time scan result push to dashboard |
+| `GET` | `/docs` | Swagger UI (auto-generated) |
+| `GET` | `/redoc` | ReDoc API docs |
+
+---
+
+## 🗄️ Database Schema
+
+```
+scans
+├── id              INTEGER  PRIMARY KEY
+├── produce_name    TEXT     (Tomato, Banana, Eggplant …)
+├── status          TEXT     HEALTHY | ROTTEN | UNCERTAIN | PENDING
+├── confidence      REAL     0.0 – 100.0 %
+├── reason          TEXT     Human-readable explanation
+├── gas_delta       REAL     kΩ resistance drop (BME688)
+├── rot_suspicion   TEXT     LOW | MEDIUM | HIGH
+├── temperature_c   REAL
+├── humidity_pct    REAL
+├── model_used      TEXT     rule_based_v1 | onnx_agriscan360_v1
+└── created_at      DATETIME
+
+scan_images  (16 rows per scan)
+├── id          INTEGER  PRIMARY KEY
+├── scan_id     INTEGER  FK → scans.id
+├── angle_deg   INTEGER  0, 45, 90, 135, 180, 225, 270, 315
+├── light_type  TEXT     rgb | uv
+├── filename    TEXT     e.g. rgb_045.jpg
+└── url_path    TEXT     /static/scans/{id}/rgb_045.jpg
 ```
 
 ---
 
-## 🧪 Hardware Unit Testing
+## 🤖 AI Engine — Datasets (To Train Later)
 
-Before running the complete system, test each hardware subsystem independently:
+> **Do NOT download datasets yet** — user will do this manually when ready.
 
-1. **Test Stepper Motor:**
-   ```bash
-   python3 run_stepper_continuous.py
-   ```
-2. **Test Dual Illumination (White & UV):**
-   ```bash
-   python3 test_dual_lights.py
-   ```
-3. **Test BME688 Gas Sensor:**
-   ```bash
-   python3 test_bme688.py
-   ```
+| Branch | Dataset | Notes |
+|---|---|---|
+| RGB (main) | Freshness44 | 10 of 11 produce covered |
+| RGB (eggplant) | BrinjalFruitX (Kaggle/Mendeley) | Solves eggplant gap |
+| RGB (multi-angle) | Fruits-360 (90,483 images) | Turntable geometry matches exactly |
+| RGB (Bangladesh) | Fresh & Rotten Fruits (BD) | Local conditions |
+| UV-A | Longitudinal RGB+UV-A Tomato (Zenodo) | Only public UV dataset |
+| UV-A (main) | **Own chamber captures** | Must collect with hardware |
+| Gas | **Own BME688 dataset** | Must collect with hardware |
 
----
-
-## 🏁 Running the Master Inspection System
-
-Execute the master orchestration script:
-```bash
-python3 main.py
-```
-
-### Automated Inspection Workflow:
-1. **IoT Dashboard Launches:** The Flask web server spins up automatically in a background daemon thread at `http://<your-pi-ip>:5000`.
-2. **Chamber Calibration:** The BME688 records a clean air baseline of the sealed chamber.
-3. **8-Angle 360° Scan:**
-   * Stepper rotates turntable in 45° increments across 8 stops.
-   * Snaps an **RGB frame** under White light.
-   * Snaps a **Fluorescence frame** under 365 nm UV light.
-4. **Chemical Analysis:** Measures accumulated chamber VOCs and calculates the resistance drop ($\Delta Gas$).
-5. **AI Fusion Inference:** Combines 16 multi-spectral frames with the gas delta to classify produce as:
-   * `HEALTHY` (High confidence fresh)
-   * `ROTTEN` (Surface necrosis or internal rot gas spike)
-   * `UNCERTAIN` (Borderline / manual inspection recommended)
-6. **Telemetry Broadcast:** Results update simultaneously on the **SSD1306 OLED** and the **Flask Web Dashboard**.
-7. **Safe De-energize:** Stepper motor coils automatically shut off to remain completely cool between inspections.
+**Supported Produce (11):** Tomato, Banana, Eggplant, Apple, Carrot, Grape, Cucumber, Guava, Orange, Potato, Pomegranate
 
 ---
 
-## 🌐 IoT Web Dashboard
+## 📦 Inspection Chamber Specs
 
-The Flask web interface is accessible from any phone, tablet, or laptop connected to the same local network:
-
-```
-http://<RASPBERRY_PI_IP>:5000
-```
-* Real-time classification status badge (`HEALTHY`, `ROTTEN`, `UNCERTAIN`)
-* AI confidence percentage metric
-* Live chamber gas delta ($\Delta Gas$) reading
-* Automated timestamped inspection log
+| Parameter | Value |
+|---|---|
+| Dimensions | L: 11" × W: 17" × H: 9" (~27.6 L) |
+| Interior finish | Matte black (no reflections) |
+| Camera | RPi Camera Module 2 (side wall, ~35° downward tilt) |
+| Turntable | 7" diameter, PLA+ 3D printed |
+| Motor mount | Under-floor (only shaft pokes through) |
+| Scan geometry | 8 stops × 45° = 360° |
 
 ---
 
-## 🎓 Academic Context
+## 🗺️ Stage Roadmap
 
-* **Institution:** United International University (UIU)
-* **Department:** Department of Computer Science and Engineering
-* **Course:** Microprocessors and Microcontrollers Laboratory (CSE 4326)
-* **Project Title:** AgriScan 360: Multi-Spectral Produce Quality Inspection Station
+### ✅ Stage 1 (Active Build — This Repo)
+- [x] Inspection chamber (matte-black box)
+- [x] 8-angle stepper motor turntable
+- [x] White LED + 365nm UV-A LED capture
+- [x] BME688 gas sensing (VOC / ethylene)
+- [x] FastAPI laptop server + SQLite DB
+- [x] Real-time WebSocket dashboard
+- [x] Rule-based AI (placeholder until model trained)
+- [ ] ONNX model training (after dataset collection)
+
+### 🔮 Stage 2 (Future)
+- [ ] Motorized PVC conveyor belt (12V gearmotor + L298N)
+- [ ] Break-beam optical sensors (fruit arrival detection)
+- [ ] MG996R servo diverter gate (ACCEPTED/REJECTED bins)
+- [ ] 40mm 5V exhaust blower fan (automated gas purge)
+- [ ] Light-tight silicone entry/exit curtains
+
+---
+
+## 👨‍💻 Course Info
+
+- **University:** United International University (UIU)
+- **Course:** CSE 4326 — Microprocessors and Microcontrollers Laboratory
+- **Year:** 4th Year CSE

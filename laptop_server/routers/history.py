@@ -84,7 +84,15 @@ def delete_scan(scan_id: int, db: Session = Depends(get_db)):
 
     # Delete image files from disk
     from config import SCANS_DIR
-    scan_dir = os.path.join(SCANS_DIR, str(scan_id))
+    import re
+    safe_produce = re.sub(r'[<>:"/\\|?*]', '_', scan.produce_name).strip() or "Produce"
+    folder_name = f"{scan_id}. {safe_produce}"
+    scan_dir = os.path.join(SCANS_DIR, folder_name)
+    if not os.path.exists(scan_dir):
+        legacy_dir = os.path.join(SCANS_DIR, str(scan_id))
+        if os.path.exists(legacy_dir):
+            scan_dir = legacy_dir
+
     if os.path.exists(scan_dir):
         try:
             shutil.rmtree(scan_dir)

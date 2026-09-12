@@ -71,7 +71,10 @@ async def ingest_scan(
     scan_id = scan.id
 
     # ── 2. Save images to disk & DB ────────────────────────────────────────────
-    scan_dir = os.path.join(SCANS_DIR, str(scan_id))
+    import re
+    safe_produce = re.sub(r'[<>:"/\\|?*]', '_', scan.produce_name).strip() or "Produce"
+    folder_name = f"{scan_id}. {safe_produce}"
+    scan_dir = os.path.join(SCANS_DIR, folder_name)
     os.makedirs(scan_dir, exist_ok=True)
 
     rgb_bytes_list = []
@@ -94,7 +97,7 @@ async def ingest_scan(
         except ValueError:
             angle_deg = 0
 
-        url_path = f"/static/scans/{scan_id}/{filename}"
+        url_path = f"/static/scans/{folder_name}/{filename}"
 
         img_record = ScanImage(
             scan_id    = scan_id,

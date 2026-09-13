@@ -47,9 +47,5 @@ dist/
 build/
 *.egg-info/
 
-# ── Datasets (can be tens of GBs — do not commit to git) ─────────────────────
-datasets/
-*.zip
-*.tar
-*.gz
-*.rar
+# ── Jupyter ────────────────────────────────────────────────────────────────────
+.ipynb_checkpoints/

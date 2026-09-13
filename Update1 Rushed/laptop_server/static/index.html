@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AgriScan 360 — Update1 Rushed Dashboard</title>
+
+  <!-- Bootstrap 5 Dark -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+
+  <!-- Custom Industrial Bio-Tech Dark Theme -->
+  <link rel="stylesheet" href="/static/css/style.css">
+
+  <meta name="theme-color" content="#0c0e12">
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     NAVBAR
+══════════════════════════════════════════════════════════════════════════════ -->
+<nav class="navbar-agriscan">
+  <div style="display:flex; align-items:center; justify-content:space-between; max-width:1600px; margin:0 auto; width:100%;">
+
+    <!-- Brand -->
+    <div style="display:flex; align-items:center; gap:12px;">
+      <span class="navbar-brand-text">AgriScan 360</span>
+      <span class="nav-badge nav-badge-stage">Stage 1</span>
+      <span class="nav-badge" style="background:rgba(0,230,118,0.1); color:#00e676; border:1px solid rgba(0,230,118,0.25);">UIU · CSE 4326</span>
+      <span class="nav-badge" style="background:rgba(255,165,0,0.1); color:#ffa500; border:1px solid rgba(255,165,0,0.3);">Update1 Rushed · RGB Only</span>
+    </div>
+
+    <!-- Connection Status -->
+    <div style="display:flex; align-items:center; gap:18px;">
+      <div style="display:flex; align-items:center;">
+        <span class="connection-dot disconnected" id="connection-dot"></span>
+        <span class="connection-status-text" id="connection-text">Connecting…</span>
+      </div>
+      <span style="font-size:0.75rem; color:var(--text-muted);" id="last-scan-time">No scans yet</span>
+    </div>
+  </div>
+</nav>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     TOAST CONTAINER
+══════════════════════════════════════════════════════════════════════════════ -->
+<div id="toast-container"></div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     MAIN LAYOUT
+══════════════════════════════════════════════════════════════════════════════ -->
+<div class="main-container">
+  <div class="grid-dashboard">
+
+    <!-- ════════════════════════════════════════════════════════════════════
+         LEFT PANEL — Live Chamber + Gas + Progress
+    ═════════════════════════════════════════════════════════════════════ -->
+    <div class="left-panel">
+
+      <!-- Live Chamber Inspection Card -->
+      <div class="card-tech panel-idle" id="live-panel">
+        <div class="card-header-tech">
+          <div class="icon" style="background:var(--uv-purple-dim);">◉</div>
+          <span class="title">Live Chamber Inspection</span>
+          <div style="margin-left:auto" id="live-status">
+            <span class="status-badge status-badge-idle">◌ Idle</span>
+          </div>
+        </div>
+        <div class="card-body-tech">
+
+          <!-- Big result display -->
+          <div style="text-align:center; padding:1rem 0 0.75rem;">
+            <div class="result-status-large" id="live-status-large" style="color:var(--text-muted);">IDLE</div>
+            <div class="result-produce-name" id="live-produce" style="margin-top:6px;">Waiting for scan…</div>
+          </div>
+
+          <!-- Confidence bar -->
+          <div style="margin:0.75rem 0 0.5rem;">
+            <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+              <span style="font-size:0.75rem; color:var(--text-muted);">Confidence</span>
+              <span style="font-size:0.75rem; font-family:monospace; color:var(--text-secondary);" id="live-confidence-val">—</span>
+            </div>
+            <div class="confidence-bar-track">
+              <div class="confidence-bar-fill" id="live-confidence-bar" style="width:0%"></div>
+            </div>
+          </div>
+
+          <!-- Reason text -->
+          <div class="reason-text" id="live-reason" style="margin-top:0.75rem;">
+            Place produce on the turntable and start a scan from the Raspberry Pi.
+          </div>
+
+          <!-- Scan progress ring (visible when scanning) -->
+          <div class="scan-progress-wrapper" id="scan-progress-wrapper" style="display:none;">
+            <div>
+              <svg class="progress-ring-svg" width="72" height="72" viewBox="0 0 72 72">
+                <circle class="progress-ring-bg" cx="36" cy="36" r="30" stroke-width="5"/>
+                <circle class="progress-ring-fg" id="progress-ring-fg" cx="36" cy="36" r="30" stroke-width="5"
+                  style="stroke-dasharray:188.5; stroke-dashoffset:188.5;"/>
+              </svg>
+            </div>
+            <div>
+              <div class="progress-stop-text" id="progress-stop-display">0/8</div>
+              <div class="progress-label">Scan stops complete</div>
+              <div class="progress-label" style="margin-top:4px; color:var(--uv-purple);">UV-A + RGB capturing…</div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- ═══ GAS SENSOR CARD — REMOVED IN UPDATE1 RUSHED ══════════════════════
+           BME688 gas sensor is not used in this build.
+           LEDs and gas sensing are manually operated.
+           Re-enable this card in the full AgriScan360 version.
+      ════════════════════════════════════════════════════════════════════════════
+      <div class="card-tech">
+        <div class="card-header-tech">
+          <div class="icon" style="background:rgba(79,195,247,0.1);">⬡</div>
+          <span class="title">BME688 — Gas Sensor (Pillar 3)</span>
+        </div>
+        <div class="card-body-tech">
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+            <div>
+              <div style="font-size:0.72rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:4px;">ΔGas Resistance</div>
+              <div>
+                <span class="gas-metric-value" id="live-gas-delta">—</span>
+                <span class="gas-metric-unit" id="live-gas-unit" style="display:none">kΩ drop</span>
+              </div>
+              <div id="live-gas-suspicion" style="margin-top:6px;"></div>
+            </div>
+            <div>
+              <div style="font-size:0.72rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:4px;">Chamber Env.</div>
+              <div style="font-size:0.85rem; color:var(--text-secondary);" id="env-display">—</div>
+            </div>
+          </div>
+          <div style="margin-top:12px; font-size:0.72rem; color:var(--text-muted); line-height:1.5;">
+            ΔGas = Baseline kΩ − Post-scan kΩ. Positive drop indicates VOC gas accumulation
+            from internal rot, core decay, or ethylene emission.
+          </div>
+        </div>
+      </div>
+      ══════════════════════════════════════════════════════════════════════════ -->
+
+      <!-- Produce Breakdown Card -->
+      <div class="card-tech">
+        <div class="card-header-tech">
+          <div class="icon" style="background:var(--bio-green-dim);">⬢</div>
+          <span class="title">Produce Breakdown</span>
+        </div>
+        <div class="card-body-tech">
+          <div id="produce-breakdown">
+            <p style="color:var(--text-muted); font-size:0.8rem">No data yet</p>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /left-panel -->
+
+    <!-- ════════════════════════════════════════════════════════════════════
+         RIGHT PANEL — Stats + Image Grid + History Table
+    ═════════════════════════════════════════════════════════════════════ -->
+    <div class="right-panel">
+
+      <!-- Statistics Bar -->
+      <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:10px;">
+        <div class="stat-card stat-total">
+          <div class="stat-value" id="stat-total">0</div>
+          <div class="stat-label">Total Scans</div>
+          <div class="stat-sub" id="stat-avg-conf">Avg. conf. —</div>
+        </div>
+        <div class="stat-card stat-healthy">
+          <div class="stat-value" id="stat-healthy">0</div>
+          <div class="stat-label">Healthy</div>
+          <div class="stat-sub" id="stat-healthy-pct">0%</div>
+        </div>
+        <div class="stat-card stat-rotten">
+          <div class="stat-value" id="stat-rotten">0</div>
+          <div class="stat-label">Rotten</div>
+          <div class="stat-sub" id="stat-rotten-pct">0%</div>
+        </div>
+        <div class="stat-card stat-uncertain">
+          <div class="stat-value" id="stat-uncertain">0</div>
+          <div class="stat-label">Uncertain</div>
+          <div class="stat-sub" id="stat-uncertain-pct">0%</div>
+        </div>
+      </div>
+
+      <!-- Latest Scan Image Grid Card -->
+      <div class="card-tech">
+        <div class="card-header-tech">
+          <div class="icon" style="background:var(--uv-purple-dim);">⊞</div>
+          <span class="title">Multi-Spectral Image Matrix</span>
+          <span style="margin-left:auto; font-size:0.72rem; color:var(--text-muted);">Latest scan · 16 frames (RGB + UV)</span>
+        </div>
+        <div class="card-body-tech">
+
+          <!-- RGB Band -->
+          <div class="spectral-band-title band-rgb">
+            🔆 360° Visible Surface Vector (RGB) — 8 angles
+          </div>
+          <div class="image-grid" id="grid-rgb">
+            <!-- Placeholder thumbnails -->
+            <div class="scan-thumb"><div class="thumb-placeholder">🖼</div></div>
+            <div class="scan-thumb"><div class="thumb-placeholder">🖼</div></div>
+            <div class="scan-thumb"><div class="thumb-placeholder">🖼</div></div>
+            <div class="scan-thumb"><div class="thumb-placeholder">🖼</div></div>
+            <div class="scan-thumb"><div class="thumb-placeholder">🖼</div></div>
+            <div class="scan-thumb"><div class="thumb-placeholder">🖼</div></div>
+            <div class="scan-thumb"><div class="thumb-placeholder">🖼</div></div>
+            <div class="scan-thumb"><div class="thumb-placeholder">🖼</div></div>
+          </div>
+
+          <div style="margin: 14px 0 10px; height:1px; background:var(--border-subtle);"></div>
+
+          <!-- UV-A Band (Active) -->
+          <div class="spectral-band-title band-uv">
+            🔵 Fungal Fluorescence Index (365nm UV-A) — 8 angles
+          </div>
+          <div class="image-grid" id="grid-uv">
+            <div class="scan-thumb"><div class="thumb-placeholder">🖼</div></div>
+            <div class="scan-thumb"><div class="thumb-placeholder">🖼</div></div>
+            <div class="scan-thumb"><div class="thumb-placeholder">🖼</div></div>
+            <div class="scan-thumb"><div class="thumb-placeholder">🖼</div></div>
+            <div class="scan-thumb"><div class="thumb-placeholder">🖼</div></div>
+            <div class="scan-thumb"><div class="thumb-placeholder">🖼</div></div>
+            <div class="scan-thumb"><div class="thumb-placeholder">🖼</div></div>
+            <div class="scan-thumb"><div class="thumb-placeholder">🖼</div></div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- History Table Card -->
+      <div class="card-tech">
+        <div class="card-header-tech">
+          <div class="icon" style="background:rgba(100,116,139,0.15);">≡</div>
+          <span class="title">Scan History</span>
+          <span style="margin-left:6px; font-size:0.75rem; color:var(--text-muted);" id="history-count"></span>
+
+          <!-- Filter bar inline -->
+          <div class="filter-bar" style="margin:0; margin-left:auto;">
+            <input  type="text"   id="filter-produce" class="filter-input"  placeholder="Produce…" style="width:110px">
+            <select id="filter-status"  class="filter-select" style="width:120px">
+              <option value="">All Status</option>
+              <option value="HEALTHY">Healthy</option>
+              <option value="ROTTEN">Rotten</option>
+              <option value="UNCERTAIN">Uncertain</option>
+            </select>
+            <button id="btn-apply-filter" class="btn-primary-tech">Filter</button>
+            <button id="btn-clear-filter" class="btn-ghost">Clear</button>
+          </div>
+        </div>
+        <div class="card-body-tech" style="padding:0;">
+          <div style="overflow-x:auto;">
+            <table class="table-industrial">
+              <thead>
+                <tr>
+                  <th>#ID</th>
+                  <th>Produce</th>
+                  <th>Status</th>
+                  <th>Confidence</th>
+                  <th>Gas Δ (kΩ)</th>
+                  <th>Suspicion</th>
+                  <th>Timestamp</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="history-tbody">
+                <tr>
+                  <td colspan="8" style="text-align:center; padding:2.5rem; color:var(--text-muted);">
+                    Loading scan history…
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Pagination -->
+          <div style="padding:0.75rem 1.25rem; border-top:1px solid var(--border-subtle);">
+            <div class="pagination-tech" id="pagination"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- API Quick-Reference Card (helpful for viva) -->
+      <div class="card-tech">
+        <div class="card-header-tech">
+          <div class="icon" style="background:rgba(79,195,247,0.08);">⌨</div>
+          <span class="title">FastAPI Endpoints</span>
+          <a href="/docs" target="_blank" style="margin-left:auto; font-size:0.75rem; color:var(--uv-purple); text-decoration:none;">
+            Open Swagger Docs ↗
+          </a>
+        </div>
+        <div class="card-body-tech">
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; font-size:0.78rem;">
+            <div style="background:var(--bg-input); border-radius:6px; padding:8px 10px;">
+              <span style="color:var(--bio-green); font-family:monospace; font-size:0.72rem;">POST</span>
+              <span style="color:var(--text-secondary); margin-left:6px;">/api/scan</span>
+            </div>
+            <div style="background:var(--bg-input); border-radius:6px; padding:8px 10px;">
+              <span style="color:var(--info-blue); font-family:monospace; font-size:0.72rem;">GET&nbsp;</span>
+              <span style="color:var(--text-secondary); margin-left:6px;">/api/history</span>
+            </div>
+            <div style="background:var(--bg-input); border-radius:6px; padding:8px 10px;">
+              <span style="color:var(--info-blue); font-family:monospace; font-size:0.72rem;">GET&nbsp;</span>
+              <span style="color:var(--text-secondary); margin-left:6px;">/api/scan/{id}</span>
+            </div>
+            <div style="background:var(--bg-input); border-radius:6px; padding:8px 10px;">
+              <span style="color:var(--info-blue); font-family:monospace; font-size:0.72rem;">GET&nbsp;</span>
+              <span style="color:var(--text-secondary); margin-left:6px;">/api/stats</span>
+            </div>
+            <div style="background:var(--bg-input); border-radius:6px; padding:8px 10px;">
+              <span style="color:var(--alert-red); font-family:monospace; font-size:0.72rem;">DEL&nbsp;</span>
+              <span style="color:var(--text-secondary); margin-left:6px;">/api/scan/{id}</span>
+            </div>
+            <div style="background:var(--bg-input); border-radius:6px; padding:8px 10px;">
+              <span style="color:var(--uv-purple); font-family:monospace; font-size:0.72rem;">WS&nbsp;&nbsp;</span>
+              <span style="color:var(--text-secondary); margin-left:6px;">/ws/live</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /right-panel -->
+  </div><!-- /grid-dashboard -->
+
+  <!-- Footer -->
+  <div style="text-align:center; padding:1.5rem 0; color:var(--text-muted); font-size:0.75rem; border-top:1px solid var(--border-subtle); margin-top:1.5rem;">
+    AgriScan 360 · Stage 1 · UIU CSE 4326 · Multi-Spectral Produce Freshness Classification
+    &nbsp;·&nbsp; <a href="/docs" style="color:var(--uv-purple); text-decoration:none;">API Docs</a>
+    &nbsp;·&nbsp; <a href="/redoc" style="color:var(--uv-purple); text-decoration:none;">ReDoc</a>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     DETAIL MODAL
+══════════════════════════════════════════════════════════════════════════════ -->
+<div class="modal fade modal-tech" id="detailModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="detail-modal-title">Scan Detail</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body" id="detail-modal-content">
+        <div style="text-align:center; padding:2rem; color:var(--text-muted);">Loading…</div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn-ghost" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Bootstrap JS -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+
+<!-- Dashboard App -->
+<script src="/static/js/app.js"></script>
+
+<!-- Inline: patch app.js to update image grid on WS event + env display -->
+<script>
+(function() {
+  // Hook into handleWsEvent to also update image grids after a scan
+  const _origHandle = window.handleWsEvent;
+
+  // Extend loadHistory to also refresh image grids for the latest scan
+  const _origLoad = window.loadHistory;
+  window.loadHistory = async function() {
+    if (_origLoad) await _origLoad();
+    // After history loads, fetch latest scan and update image grids
+    try {
+      const data = await fetch('/api/history?page=1&limit=1').then(r=>r.json());
+      if (data.items && data.items.length > 0) {
+        const latest = data.items[0];
+        document.getElementById('last-scan-time').textContent =
+          'Last: ' + new Date(latest.created_at).toLocaleTimeString();
+        // Update env display if gas panel is live
+        const envEl = document.getElementById('env-display');
+        if (envEl && latest.temperature_c) {
+          envEl.textContent = `${latest.temperature_c.toFixed(1)}°C · ${latest.humidity_pct?.toFixed(0) ?? '—'}% RH`;
+        }
+        // Fetch full detail to populate image grids
+        const detail = await fetch(`/api/scan/${latest.id}`).then(r=>r.json());
+        updateImageGrids(detail.images || []);
+      }
+    } catch(e) { /* silent */ }
+  };
+
+  function updateImageGrids(images) {
+    const angles = [0, 45, 90, 135, 180, 225, 270, 315];
+    const rgbGrid = document.getElementById('grid-rgb');
+    const uvGrid  = document.getElementById('grid-uv');
+    if (!rgbGrid) return;
+
+    const rgbImgs = images.filter(i => i.light_type === 'rgb').sort((a,b)=>a.angle_deg-b.angle_deg);
+    const uvImgs  = images.filter(i => i.light_type === 'uv').sort((a,b)=>a.angle_deg-b.angle_deg);
+
+    function renderGrid(container, imgs) {
+      if (!container) return;
+      container.innerHTML = '';
+      const toShow = imgs.length > 0 ? imgs : angles.map(a => null);
+      toShow.forEach((img, i) => {
+        const thumb = document.createElement('div');
+        thumb.className = 'scan-thumb fade-in';
+        if (img) {
+          thumb.onclick = () => window.open(img.url_path, '_blank');
+          thumb.innerHTML = `
+            <img src="${img.url_path}" alt="${img.light_type} ${img.angle_deg}°"
+                 onerror="this.parentElement.innerHTML='<div class=\'thumb-placeholder\'>🖼</div>'">
+            <span class="angle-label">${img.angle_deg}°</span>`;
+        } else {
+          thumb.innerHTML = '<div class="thumb-placeholder">🖼</div>';
+        }
+        container.appendChild(thumb);
+      });
+    }
+
+    renderGrid(rgbGrid, rgbImgs);
+    if (uvGrid) {
+      renderGrid(uvGrid, uvImgs);
+    }
+  }
+
+  // Also update grids immediately on WS scan_complete event
+  document.addEventListener('DOMContentLoaded', () => {
+    // Patch WebSocket message handler after original is set up
+    const _origOnMessage = window.__wsOnMessage__;
+  });
+})();
+</script>
+
+</body>
+</html>

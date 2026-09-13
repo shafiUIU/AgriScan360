@@ -5,12 +5,15 @@
 #   - LEDs (White + UV) are controlled MANUALLY by hand (no GPIO, no MOSFETs)
 #   - BME688 gas sensor is REMOVED (no I2C gas measurement)
 #   - Motor + Camera remain 100% functional
-#   - 8 RGB images captured per scan (no UV images)
+#   - 16 images captured per scan (8 RGB + 8 UV via manual external switch)
 
-# ── Network ──────────────────────────────────────────────────────────────────
-LAPTOP_SERVER_URL   = "http://192.168.1.100:8000"   # ← CHANGE THIS to your laptop's IP
-API_SCAN_ENDPOINT   = f"{LAPTOP_SERVER_URL}/api/scan"
-API_HEALTH_ENDPOINT = f"{LAPTOP_SERVER_URL}/api/health"
+# ── Network (Single-Device Standalone Pi) ────────────────────────────────────
+# In Single-Device mode, the server runs on the Pi itself at 127.0.0.1:8000.
+# No external IP or Wi-Fi matching required!
+SERVER_URL          = "http://127.0.0.1:8000"
+LAPTOP_SERVER_URL   = SERVER_URL   # Backwards compatibility alias
+API_SCAN_ENDPOINT   = f"{SERVER_URL}/api/scan"
+API_HEALTH_ENDPOINT = f"{SERVER_URL}/api/health"
 REQUEST_TIMEOUT_SEC = 30
 
 # ── GPIO Pins (BCM numbering) ─────────────────────────────────────────────────

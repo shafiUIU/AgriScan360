@@ -19,19 +19,27 @@
 
 ---
 
-## 🏗️ System Architecture
+## 🏗️ System Architecture (Single-Device Standalone)
 
 ```
-┌─────────────────────────────────┐       Wi-Fi LAN       ┌──────────────────────────────────────┐
-│      RASPBERRY PI 5  (Edge)     │  ───────────────────▶  │       LAPTOP  (AI Server)            │
-│                                 │   HTTP POST /api/scan   │                                      │
-│  • NEMA 17 Stepper + A4988      │   16 images + gas data  │  • FastAPI + Uvicorn (port 8000)     │
-│  • White LED Array (IRLZ44N)    │                         │  • SQLite via SQLAlchemy ORM         │
-│  • 365nm UV-A Array (IRLZ44N)   │  ◀───────────────────   │  • AI Classifier (rule-based→ONNX)   │
-│  • RPi Camera Module 2 (8MP)    │   JSON result           │  • WebSocket live dashboard push     │
-│  • BME688 Gas Sensor (I2C)      │                         │  • Web dashboard at localhost:8000   │
-│  • SSD1306 OLED 0.96" (I2C)    │                         │                                      │
-└─────────────────────────────────┘                         └──────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                       RASPBERRY PI 5 (All-In-One Appliance)                 │
+│                                                                             │
+│  ┌─────────────────────────┐          Internal Loopback                     │
+│  │   Hardware & Scanner    │  ─────────────────────────────────┐            │
+│  │                         │       HTTP POST http://127.0.0.1  │            │
+│  │  • NEMA 17 + A4988      │         16 images (8 RGB + 8 UV)  │            │
+│  │  • Pi Camera Module     │                                   ▼            │
+│  │  • Manual LED prompts   │                          ┌──────────────────┐  │
+│  │  • SSD1306 OLED (I2C)   │                          │  FastAPI Backend │  │
+│  └─────────────────────────┘                          │  • Port 8000     │  │
+│                                                       │  • SQLite DB     │  │
+│                                                       │  • Local AI      │  │
+│  ┌─────────────────────────┐     LAN (Wi-Fi)          │  • WebSocket     │  │
+│  │ Remote Browser (Laptop) │ ◀─────────────────────── │  • Web Dashboard │  │
+│  │  http://<PI_IP>:8000    │   Live Updates & UI      └──────────────────┘  │
+│  └─────────────────────────┘                                                │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ## 🔬 Three Detection Pillars
@@ -89,52 +97,42 @@ AgriScan360/
 
 ---
 
-## ⚡ Quick Start
+## ⚡ Quick Start — Single-Device Standalone (Recommended)
 
-### Step 1 — Start the Laptop Server
+Everything runs standalone on the **Raspberry Pi alone**. No laptop server required!
 
+### 1. Copy `Update1 Rushed` to your Raspberry Pi
+Drag-and-drop the folder `Update1 Rushed` to `/home/pi/` via VS Code Remote SSH or SCP:
 ```bash
-# On your Windows laptop:
-cd "path\to\AgriScan360"
-start_server.bat
-
-# Or manually:
-cd laptop_server
-pip install -r requirements_laptop.txt
-python -m uvicorn main_server:app --host 0.0.0.0 --port 8000 --reload
+scp -r "C:\Users\MD. SHAFIUL BARI\Downloads\MICRO LAB\Update1 Rushed" pi@<PI_IP>:~/
 ```
 
-Open **http://localhost:8000** in your browser → Dashboard appears.
-
-### Step 2 — Configure the Pi
-
-Edit `pi_client/config.py` and set your laptop's LAN IP:
-```python
-LAPTOP_SERVER_URL = "http://192.168.1.XXX:8000"   # ← Your laptop's IP from ipconfig
-```
-
-> Run `ipconfig` on your laptop and find the **IPv4 Address** under your Wi-Fi adapter.
-
-### Step 3 — Start the Pi Client
-
+### 2. Set Up Virtual Environment on Pi
+In your Raspberry Pi terminal:
 ```bash
-# On the Raspberry Pi:
-cd /path/to/AgriScan360
-bash start_pi.sh
-
-# Or manually:
-cd pi_client
-pip install -r requirements_pi.txt
-python main.py
+cd ~/Update1\ Rushed
+python3 -m venv --system-site-packages venv
+source venv/bin/activate
+pip install -r requirements_pi_all_in_one.txt
 ```
 
-### Step 4 — Run a Scan
+### 3. Run Standalone AgriScan 360
+```bash
+bash start_agriscan.sh
+# Or directly:
+python run_single_device.py
+```
+> **Testing without hardware?** Pass `--simulate`:
+> `python run_single_device.py --simulate`
 
-1. Select produce type (Tomato, Banana, etc.)
-2. The Pi calibrates BME688 gas baseline (empty chamber)
-3. Place fruit on the turntable → press **Enter**
-4. Motor rotates 8× 45° → camera captures 16 images
-5. Images + gas data POST to laptop → AI classifies → result appears on OLED + dashboard
+### 4. What Happens Automatically:
+1. The FastAPI Web Server boots on `http://0.0.0.0:8000` (PID logged to `server.log`).
+2. The Web Dashboard is immediately accessible:
+   - On the Pi itself: `http://localhost:8000`
+   - From any laptop, phone, or tablet on your Wi-Fi: `http://<PI_IP>:8000`
+3. The interactive scanner prompts you for produce name and manual LED passes.
+4. Images are sent internally via `127.0.0.1:8000` — zero Wi-Fi drops, zero firewall blocking!
+5. The local AI engine classifies the sample and immediately pushes results to the web dashboard and OLED display.
 
 ---
 

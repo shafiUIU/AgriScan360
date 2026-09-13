@@ -1,0 +1,35 @@
+# =============================================================================
+# AgriScan 360 — Single-Device Standalone Pi Requirements
+# =============================================================================
+# Run on the Raspberry Pi:
+#   python3 -m venv --system-site-packages venv
+#   source venv/bin/activate
+#   pip install -r requirements_pi_all_in_one.txt
+# =============================================================================
+
+# ── Web Server & Database (Hosting FastAPI on Pi) ────────────────────────────
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+sqlalchemy>=2.0.0
+pydantic>=2.6.0
+python-multipart>=0.0.9
+aiofiles>=23.2.1
+
+# ── AI Engine & Image Processing (Running AI on Pi) ──────────────────────────
+Pillow>=10.0.0
+numpy>=1.24.0
+opencv-python-headless>=4.8.0
+# Note: onnxruntime is optional; the engine automatically falls back to rule-based
+# vision heuristics if onnxruntime is omitted on 32-bit Pi systems.
+onnxruntime>=1.16.0; platform_machine != "armv7l"
+
+# ── Network & Utilities ──────────────────────────────────────────────────────
+requests>=2.31.0
+python-dateutil>=2.8.2
+
+# ── Hardware Note (Inherited via --system-site-packages) ─────────────────────
+# On Raspberry Pi OS (Bookworm / Bullseye), install hardware drivers via APT:
+#   sudo apt update && sudo apt install -y python3-picamera2 python3-gpiozero python3-rpi-lgpio
+# Or install via pip if not already installed system-wide:
+gpiozero>=2.0
+lgpio>=0.2.2.0; sys_platform == "linux"

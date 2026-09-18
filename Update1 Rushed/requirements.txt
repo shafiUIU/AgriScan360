@@ -1,9 +1,0 @@
-# AgriScan 360 - Python Dependencies
-# Install via terminal: pip install -r requirements.txt --break-system-packages
-
-bme680>=1.1.1
-smbus2>=0.4.3
-Flask>=2.3.0
-Pillow>=9.0.0
-adafruit-circuitpython-ssd1306>=2.12.14
-gpiozero>=2.0

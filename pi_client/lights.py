@@ -1,100 +1,180 @@
 """
-lights.py — Dual LED Array Controller via IRLZ44N MOSFETs
-===========================================================
-Hardware:
+lights.py — Dual LED Array Controller (Adaptive: MOSFET Hardware or Manual Operator)
+=====================================================================================
+Hardware Mode (MOSFETs connected):
     MOSFET #1 (GPIO 18) → White Diffused LED Array  (visible light scan)
     MOSFET #2 (GPIO 24) → 365nm UV-A LED Array      (fungal fluorescence scan)
 
-Wiring reminder:
-    Gate  → Raspberry Pi GPIO (+ 10kΩ pull-down to GND)
-    Drain → LED Array (-) terminal
-    Source → Common GND
-    LED (+) → 12V or 5V power rail
+Manual Mode (No MOSFETs connected):
+    Lights are toggled by hand using an external switch.
+    The system interactively prompts the operator at each stop:
+        1. Turn ON White LED -> [Enter] -> capture snap -> Turn OFF White LED
+        2. Turn ON UV-A LED  -> [Enter] -> capture snap -> Turn OFF UV-A LED
 """
 
 import time
-from gpiozero import DigitalOutputDevice
+import logging
+
+log = logging.getLogger(__name__)
+
+try:
+    from gpiozero import DigitalOutputDevice
+    GPIOZERO_AVAILABLE = True
+except ImportError:
+    GPIOZERO_AVAILABLE = False
+
 from config import PIN_LED_WHITE, PIN_LED_UV, WHITE_WARMUP_SEC, UV_WARMUP_SEC
 
 
 class LightController:
     """
-    Controls two LED arrays through IRLZ44N low-side MOSFET switches.
-    Always call off_all() before switching between light types to avoid
-    cross-contamination (UV glow affecting the white-light capture).
+    Controls White and UV-A illumination.
+    Automatically supports both MOSFET GPIO switching and Manual human switching.
     """
 
-    def __init__(self):
-        self.white = DigitalOutputDevice(PIN_LED_WHITE, initial_value=False)
-        self.uv    = DigitalOutputDevice(PIN_LED_UV,    initial_value=False)
+    def __init__(self, mode: str = "auto", simulate: bool = False):
+        """
+        Args:
+            mode: "auto" (attempt MOSFET GPIO control), "manual" (human toggles switches),
+                  or "simulate" (no-op for PC testing).
+            simulate: Flag forcing simulated mode.
+        """
+        self.simulate = simulate
+        self.mode = mode.lower()
+        self._white_dev = None
+        self._uv_dev = None
+        self._manual_active_light = None  # Tracks state in manual mode
 
-    # ── Basic ON/OFF ───────────────────────────────────────────────────────────
+        if self.mode == "auto" and not self.simulate and GPIOZERO_AVAILABLE:
+            try:
+                self._white_dev = DigitalOutputDevice(PIN_LED_WHITE, initial_value=False)
+                self._uv_dev    = DigitalOutputDevice(PIN_LED_UV,    initial_value=False)
+                log.info("LightController: MOSFET mode active on GPIO %d (White) & GPIO %d (UV)",
+                         PIN_LED_WHITE, PIN_LED_UV)
+            except Exception as exc:
+                log.warning("Could not initialize MOSFET GPIOs (%s). Falling back to MANUAL mode.", exc)
+                self.mode = "manual"
+        elif self.mode != "manual":
+            self.mode = "manual" if not self.simulate else "simulate"
 
-    def white_on(self):
+        if self.mode == "manual":
+            log.info("LightController: MANUAL mode active (operator switches lights by hand)")
+        elif self.mode == "simulate":
+            log.info("LightController: SIMULATION mode active")
+
+    @property
+    def is_manual(self) -> bool:
+        return self.mode == "manual"
+
+    # ── White Light Control ───────────────────────────────────────────────────
+
+    def white_on(self, stop_index: int = 0, angle: int = 0):
         """Turn on white diffused LED array."""
-        self.uv.off()                         # Ensure UV is OFF first
-        time.sleep(0.05)
-        self.white.on()
-        time.sleep(WHITE_WARMUP_SEC)           # Warm-up before capture
+        if self.mode == "auto" and self._white_dev:
+            if self._uv_dev:
+                self._uv_dev.off()
+            time.sleep(0.05)
+            self._white_dev.on()
+            time.sleep(WHITE_WARMUP_SEC)
+        elif self.mode == "manual":
+            print(f"\n[>] [Stop {stop_index + 1}/8 ({angle}°)] Turn ON White LED switch.")
+            print(f"    Press [Enter] when ready to capture RGB...", end="", flush=True)
+            try:
+                input()
+            except EOFError:
+                pass
+            self._manual_active_light = "white"
+        else:
+            time.sleep(0.05)
 
     def white_off(self):
-        self.white.off()
+        """Turn off white diffused LED array."""
+        if self.mode == "auto" and self._white_dev:
+            self._white_dev.off()
+        elif self.mode == "manual":
+            if self._manual_active_light == "white":
+                print("    [White LED -> OFF]")
+                self._manual_active_light = None
 
-    def uv_on(self):
+    # ── UV-A Light Control ────────────────────────────────────────────────────
+
+    def uv_on(self, stop_index: int = 0, angle: int = 0):
         """Turn on 365nm UV-A LED array."""
-        self.white.off()                       # Ensure White is OFF first
-        time.sleep(0.05)
-        self.uv.on()
-        time.sleep(UV_WARMUP_SEC)             # UV-A needs slightly longer warm-up
+        if self.mode == "auto" and self._uv_dev:
+            if self._white_dev:
+                self._white_dev.off()
+            time.sleep(0.05)
+            self._uv_dev.on()
+            time.sleep(UV_WARMUP_SEC)
+        elif self.mode == "manual":
+            print(f"\n[>] [Stop {stop_index + 1}/8 ({angle}°)] Turn OFF White LED, Turn ON 365nm UV-A LED switch.")
+            print(f"    Press [Enter] when ready to capture UV...", end="", flush=True)
+            try:
+                input()
+            except EOFError:
+                pass
+            self._manual_active_light = "uv"
+        else:
+            time.sleep(0.05)
 
     def uv_off(self):
-        self.uv.off()
+        """Turn off 365nm UV-A LED array."""
+        if self.mode == "auto" and self._uv_dev:
+            self._uv_dev.off()
+        elif self.mode == "manual":
+            if self._manual_active_light == "uv":
+                print("    [UV-A LED -> OFF]")
+                self._manual_active_light = None
 
     def off_all(self):
-        """Kill all lights. Always call between light-type switches."""
-        self.white.off()
-        self.uv.off()
+        """Turn off all lights."""
+        if self.mode == "auto":
+            if self._white_dev:
+                self._white_dev.off()
+            if self._uv_dev:
+                self._uv_dev.off()
+        elif self.mode == "manual":
+            self._manual_active_light = None
 
-    # ── Context managers for safe capture sequences ───────────────────────────
+    # ── Context Managers ──────────────────────────────────────────────────────
 
-    def capture_white(self):
-        """
-        Context manager for white-light capture.
-        Usage:
-            with lights.capture_white():
-                image = camera.capture()
-        """
-        return _LightContext(self, mode="white")
+    def capture_white(self, stop_index: int = 0, angle: int = 0):
+        return _LightContext(self, mode="white", stop_index=stop_index, angle=angle)
 
-    def capture_uv(self):
-        """
-        Context manager for UV capture.
-        Usage:
-            with lights.capture_uv():
-                image = camera.capture()
-        """
-        return _LightContext(self, mode="uv")
+    def capture_uv(self, stop_index: int = 0, angle: int = 0):
+        return _LightContext(self, mode="uv", stop_index=stop_index, angle=angle)
 
     def cleanup(self):
-        """Release GPIO resources."""
+        """Release GPIO resources cleanly."""
         self.off_all()
-        self.white.close()
-        self.uv.close()
+        if self._white_dev:
+            try:
+                self._white_dev.close()
+            except Exception:
+                pass
+        if self._uv_dev:
+            try:
+                self._uv_dev.close()
+            except Exception:
+                pass
 
 
 class _LightContext:
-    """Internal context manager — turns light on before enter, off on exit."""
-
-    def __init__(self, controller: LightController, mode: str):
+    def __init__(self, controller: LightController, mode: str, stop_index: int = 0, angle: int = 0):
         self._ctrl = controller
         self._mode = mode
+        self._stop = stop_index
+        self._angle = angle
 
     def __enter__(self):
         if self._mode == "white":
-            self._ctrl.white_on()
+            self._ctrl.white_on(stop_index=self._stop, angle=self._angle)
         else:
-            self._ctrl.uv_on()
+            self._ctrl.uv_on(stop_index=self._stop, angle=self._angle)
         return self
 
     def __exit__(self, *_):
-        self._ctrl.off_all()
+        if self._mode == "white":
+            self._ctrl.white_off()
+        else:
+            self._ctrl.uv_off()

@@ -40,6 +40,31 @@ def get_db():
 
 
 def create_all_tables():
-    """Create all ORM-defined tables. Called once at server startup."""
+    """Create all ORM-defined tables. Called once at server startup with auto-migration for SQLite."""
     from models import Scan, ScanImage   # noqa: F401 — must import to register
     Base.metadata.create_all(bind=engine)
+
+    # Ensure existing SQLite tables are upgraded with any newly added analytics columns
+    try:
+        with engine.connect() as conn:
+            cursor = conn.exec_driver_sql("PRAGMA table_info(scans)")
+            existing_cols = {row[1] for row in cursor.fetchall()}
+            
+            new_cols = {
+                "baseline_gas_kohms": "FLOAT",
+                "post_scan_gas_kohms": "FLOAT",
+                "gas_min_kohms": "FLOAT",
+                "gas_max_kohms": "FLOAT",
+                "gas_mean_kohms": "FLOAT",
+                "gas_std_kohms": "FLOAT",
+                "gas_ratio_pct": "FLOAT",
+                "gas_slope_per_sec": "FLOAT",
+                "sample_count": "INTEGER DEFAULT 0",
+                "pressure_hpa": "FLOAT",
+            }
+            for col_name, col_type in new_cols.items():
+                if col_name not in existing_cols:
+                    conn.exec_driver_sql(f"ALTER TABLE scans ADD COLUMN {col_name} {col_type}")
+            conn.commit()
+    except Exception:
+        pass

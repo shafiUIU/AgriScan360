@@ -1,0 +1,220 @@
+I checked your code. Since you are **NOT using Bosch AI Studio**, your BME688 is basically acting as a **raw environmental + gas resistance sensor**.
+
+From the code, the sensor only provides:
+
+* Temperature (°C)
+* Humidity (%RH)
+* Pressure (hPa)
+* Gas Resistance (Ohms / kOhms)
+
+It does **NOT** provide:
+
+* IAQ score
+* CO₂ equivalent
+* VOC concentration in ppm
+* Gas type (ethylene, ammonia, alcohol, etc.)
+* Mold detection
+
+The code calculates rot suspicion only from the change in gas resistance (ΔkOhms). 
+
+---
+
+# What your current code stores
+
+The final result currently stores:
+
+* baseline_kohms
+* post_scan_kohms
+* delta_kohms
+* rot_suspicion
+* temperature_c
+* humidity_pct
+
+
+
+For a simple engineering project, this works.
+
+---
+
+# What I would store for EVERY SCAN
+
+Since your project only has:
+
+* Apple
+* Tomato
+* Eggplant (Brinjal)
+
+and
+
+* 8 RGB images
+* 8 UV-A images
+* BME688
+
+I would store:
+
+| Field               | Example          |
+| ------------------- | ---------------- |
+| scan_id             | APPLE_0001       |
+| fruit_type          | apple            |
+| condition           | healthy          |
+| timestamp           | 2026-09-14 12:30 |
+| temperature_c       | 25.1             |
+| humidity_pct        | 61.2             |
+| pressure_hpa        | 1012.4           |
+| baseline_gas_kohms  | 88.4             |
+| post_scan_gas_kohms | 73.8             |
+| delta_gas_kohms     | 14.6             |
+| gas_min_kohms       | 72.5             |
+| gas_max_kohms       | 89.1             |
+| gas_mean_kohms      | 80.2             |
+| gas_std_kohms       | 5.8              |
+| rgb_image_count     | 8                |
+| uv_image_count      | 8                |
+
+---
+
+# One thing missing from your code
+
+Your code continuously collects gas readings:
+
+```python
+self._readings.append(r)
+```
+
+
+
+but finally throws away most of them and only keeps:
+
+* baseline
+* post-scan
+* delta
+
+You are losing valuable information.
+
+---
+
+# I would additionally save
+
+From all collected gas readings:
+
+### gas_min_kohms
+
+Lowest resistance observed.
+
+### gas_max_kohms
+
+Highest resistance observed.
+
+### gas_mean_kohms
+
+Average resistance.
+
+### gas_std_kohms
+
+Standard deviation.
+
+### sample_count
+
+How many gas samples collected during the 16-image scan.
+
+---
+
+# Why?
+
+Suppose two tomatoes:
+
+| Tomato | Delta |
+| ------ | ----- |
+| A      | 10    |
+| B      | 10    |
+
+Both have same delta.
+
+But:
+
+| Tomato | Std Dev |
+| ------ | ------- |
+| A      | 0.5     |
+| B      | 8.0     |
+
+Tomato B may be releasing VOCs much more inconsistently.
+
+The ML model can learn this.
+
+---
+
+# For your specific project (Apple + Tomato + Eggplant)
+
+My recommended sensor dataset columns are:
+
+```text
+fruit_type
+
+temperature_c
+humidity_pct
+pressure_hpa
+
+baseline_gas_kohms
+post_scan_gas_kohms
+delta_gas_kohms
+
+gas_min_kohms
+gas_max_kohms
+gas_mean_kohms
+gas_std_kohms
+
+sample_count
+
+label
+```
+
+Where:
+
+```text
+label =
+healthy
+early_rot
+medium_rot
+severe_rot
+```
+
+or
+
+```text
+healthy
+rotten
+```
+
+if you want a simpler model.
+
+---
+
+# If I were supervising this project
+
+For your 3-fruit setup in a 27L closed box with Raspberry Pi Camera Module 2 + UV-A LEDs + BME688, I would use:
+
+### Images
+
+* 8 RGB photos
+* 8 UV-A photos
+
+### BME688 Features
+
+* temperature
+* humidity
+* pressure
+* baseline gas resistance
+* post-scan gas resistance
+* delta gas resistance
+* min gas resistance
+* max gas resistance
+* mean gas resistance
+* std deviation gas resistance
+
+### Labels
+
+* healthy
+* early_rot
+* rotten
+
+That is enough for a strong final-year/project-demo level multimodal system without needing AI Studio.

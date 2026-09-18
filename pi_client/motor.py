@@ -8,7 +8,17 @@ Logic:     Open-loop step-counting. No Hall sensor needed.
 """
 
 import time
-from gpiozero import DigitalOutputDevice
+import logging
+
+log = logging.getLogger(__name__)
+
+try:
+    from gpiozero import DigitalOutputDevice
+    GPIOZERO_AVAILABLE = True
+except ImportError:
+    GPIOZERO_AVAILABLE = False
+    log.warning("gpiozero not available. Motor running in simulation mode.")
+
 from config import (
     PIN_STEP, PIN_DIR, PIN_ENABLE,
     STEPS_PER_STOP, NUM_SCAN_STOPS,
@@ -25,16 +35,21 @@ class StepperMotor:
         enable_pin.on()   →  motor coils released   (motor free, stays cool)
     """
 
-    def __init__(self):
-        self.step_pin   = DigitalOutputDevice(PIN_STEP,   initial_value=False)
-        self.dir_pin    = DigitalOutputDevice(PIN_DIR,    initial_value=False)
-        self.enable_pin = DigitalOutputDevice(PIN_ENABLE, initial_value=True)   # starts OFF
+    def __init__(self, simulate: bool = False):
+        self._simulate = simulate or not GPIOZERO_AVAILABLE
+        if not self._simulate:
+            self.step_pin   = DigitalOutputDevice(PIN_STEP,   initial_value=False)
+            self.dir_pin    = DigitalOutputDevice(PIN_DIR,    initial_value=False)
+            self.enable_pin = DigitalOutputDevice(PIN_ENABLE, initial_value=True)   # starts OFF
         self._stop_requested = False
 
     # ── Internal helpers ───────────────────────────────────────────────────────
 
     def _pulse(self, delay: float = PULSE_DELAY):
         """Send one STEP pulse."""
+        if self._simulate:
+            time.sleep(0.001)
+            return
         self.step_pin.on()
         time.sleep(delay / 2)
         self.step_pin.off()
@@ -51,7 +66,8 @@ class StepperMotor:
 
     def enable(self):
         """Energize motor coils (motor can move)."""
-        self.enable_pin.off()   # Active LOW
+        if not self._simulate:
+            self.enable_pin.off()   # Active LOW
         time.sleep(0.05)        # Brief settle
 
     def disable(self):
@@ -59,12 +75,14 @@ class StepperMotor:
         De-energize motor coils (motor free, no heat, holds last position passively).
         Always call after scan is complete.
         """
-        self.step_pin.off()     # Ensure STEP pin is low — prevents ghost steps
-        self.enable_pin.on()    # Release coils
+        if not self._simulate:
+            self.step_pin.off()     # Ensure STEP pin is low — prevents ghost steps
+            self.enable_pin.on()    # Release coils
 
     def set_direction(self, clockwise: bool = True):
         """Set rotation direction. True = clockwise (looking down at turntable)."""
-        self.dir_pin.value = clockwise
+        if not self._simulate:
+            self.dir_pin.value = clockwise
 
     def move_steps(self, steps: int, smooth: bool = True):
         """
@@ -120,6 +138,10 @@ class StepperMotor:
     def cleanup(self):
         """Release all GPIO resources cleanly."""
         self.disable()
-        self.step_pin.close()
-        self.dir_pin.close()
-        self.enable_pin.close()
+        if not self._simulate:
+            try:
+                self.step_pin.close()
+                self.dir_pin.close()
+                self.enable_pin.close()
+            except Exception:
+                pass

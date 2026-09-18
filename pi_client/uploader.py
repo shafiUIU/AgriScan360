@@ -79,16 +79,26 @@ class ScanUploader:
             files.append(("images", (f"rgb_{angle:03d}.jpg", rgb, "image/jpeg")))
             files.append(("images", (f"uv_{angle:03d}.jpg",  uv,  "image/jpeg")))
 
-        # Build form data
+        # Build form data with comprehensive gas analytics
         data = {
-            "produce_name":   produce_name,
-            "gas_delta":      str(round(gas_result.delta_kohms, 3)),
-            "rot_suspicion":  gas_result.rot_suspicion,
-            "temperature_c":  str(round(gas_result.baseline_temp, 1)),
-            "humidity_pct":   str(round(gas_result.baseline_humidity, 1)),
+            "produce_name":        produce_name,
+            "gas_delta":           str(round(gas_result.delta_kohms, 3)),
+            "baseline_gas_kohms":  str(round(getattr(gas_result, 'baseline_kohms', 0.0), 2)),
+            "post_scan_gas_kohms": str(round(getattr(gas_result, 'post_scan_gas_kohms', 0.0), 2)),
+            "gas_min_kohms":       str(round(getattr(gas_result, 'gas_min_kohms', 0.0), 2)),
+            "gas_max_kohms":       str(round(getattr(gas_result, 'gas_max_kohms', 0.0), 2)),
+            "gas_mean_kohms":      str(round(getattr(gas_result, 'gas_mean_kohms', 0.0), 2)),
+            "gas_std_kohms":       str(round(getattr(gas_result, 'gas_std_kohms', 0.0), 2)),
+            "gas_ratio_pct":       str(round(getattr(gas_result, 'gas_ratio_pct', 0.0), 2)),
+            "gas_slope_per_sec":   str(round(getattr(gas_result, 'gas_slope_per_sec', 0.0), 4)),
+            "sample_count":        str(getattr(gas_result, 'sample_count', 0)),
+            "rot_suspicion":       gas_result.rot_suspicion,
+            "temperature_c":       str(round(getattr(gas_result, 'temperature_c', gas_result.baseline_temp), 1)),
+            "humidity_pct":        str(round(getattr(gas_result, 'humidity_pct', gas_result.baseline_humidity), 1)),
+            "pressure_hpa":        str(round(getattr(gas_result, 'pressure_hpa', 1013.25), 1)),
         }
 
-        log.info("Uploading scan to %s  (produce=%s, gas_delta=%.2f kΩ)",
+        log.info("Uploading scan to %s  (produce=%s, gas_delta=%.2f kOhm)",
                  API_SCAN_ENDPOINT, produce_name, gas_result.delta_kohms)
 
         try:

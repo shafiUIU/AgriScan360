@@ -50,7 +50,8 @@ except ImportError:
     ONNX_AVAILABLE = False
 
 from config import (
-    MODEL_PATH, USE_AI_MODEL,
+    RGB_MODEL_PATH, UV_MODEL_PATH,
+    USE_RGB_MODEL, USE_UV_MODEL, USE_AI_MODEL,
     HEALTHY_CONFIDENCE_MIN,
     ROTTEN_GAS_DELTA_HIGH, ROTTEN_GAS_DELTA_MED,
     ROT_DARK_PIXEL_RATIO, ROT_HUE_VARIANCE_LOW,
@@ -197,19 +198,23 @@ class ImageAnalyzer:
 # =============================================================================
 
 class ONNXClassifier:
-    """Wrapper around ONNX Runtime for trained model inference."""
+    """
+    Wrapper around ONNX Runtime for a single trained model.
+    Instantiated separately for RGB and UV models.
+    """
 
-    def __init__(self):
+    def __init__(self, model_path: str, label: str = "model"):
         self._session = None
-        if USE_AI_MODEL and ONNX_AVAILABLE:
+        self._label   = label
+        if ONNX_AVAILABLE and model_path:
             try:
                 self._session = ort.InferenceSession(
-                    MODEL_PATH,
+                    model_path,
                     providers=["CPUExecutionProvider"]
                 )
-                log.info("ONNX model loaded from %s", MODEL_PATH)
+                log.info("%s ONNX model loaded from %s", label, model_path)
             except Exception as exc:
-                log.error("ONNX model load failed: %s", exc)
+                log.error("%s ONNX model load failed: %s", label, exc)
 
     @property
     def available(self):
@@ -219,7 +224,7 @@ class ONNXClassifier:
         """
         Run inference on a single image.
         Returns (class_label, confidence_0_to_1).
-        Expects model to output softmax probabilities for [HEALTHY, ROTTEN, UNCERTAIN].
+        Model output: raw logits for [HEALTHY, ROTTEN, UNCERTAIN] — softmax applied here.
         """
         if not self.available:
             return "UNKNOWN", 0.0
@@ -229,7 +234,7 @@ class ONNXClassifier:
             arr = ImageAnalyzer._load_as_array(image_bytes)
             if arr is None:
                 return "UNKNOWN", 0.0
-            # Resize and normalize for model input (224×224, ImageNet stats)
+            # Resize and normalize for model input (224x224, ImageNet stats)
             if CV2_AVAILABLE:
                 arr = cv2.resize(arr, (224, 224))
             else:
@@ -242,12 +247,13 @@ class ONNXClassifier:
 
             input_name = self._session.get_inputs()[0].name
             outputs    = self._session.run(None, {input_name: arr})[0][0]
-            probs      = np.exp(outputs) / np.exp(outputs).sum()   # softmax
+            exp_out    = np.exp(outputs - outputs.max())  # numerically stable softmax
+            probs      = exp_out / exp_out.sum()
             labels     = ["HEALTHY", "ROTTEN", "UNCERTAIN"]
             idx        = int(np.argmax(probs))
             return labels[idx], float(probs[idx])
         except Exception as exc:
-            log.error("ONNX inference error: %s", exc)
+            log.error("%s ONNX inference error: %s", self._label, exc)
             return "UNKNOWN", 0.0
 
 
@@ -269,17 +275,30 @@ class AIClassifier:
     CLASS_LABELS = ["HEALTHY", "ROTTEN", "UNCERTAIN"]
 
     def __init__(self):
-        self._onnx = ONNXClassifier()
+        # Load RGB model (Pillar 1) and UV model (Pillar 2) separately
+        self._rgb_onnx = ONNXClassifier(
+            model_path=RGB_MODEL_PATH if USE_RGB_MODEL else "",
+            label="RGB"
+        )
+        self._uv_onnx = ONNXClassifier(
+            model_path=UV_MODEL_PATH if USE_UV_MODEL else "",
+            label="UV"
+        )
         self._analyzer = ImageAnalyzer()
-        log.info("AIClassifier initialized. ONNX model: %s",
-                 "loaded" if self._onnx.available else "NOT loaded (rule-based mode)")
+        log.info(
+            "AIClassifier initialized. RGB model: %s | UV model: %s",
+            "loaded" if self._rgb_onnx.available else "rule-based",
+            "loaded" if self._uv_onnx.available  else "rule-based",
+        )
 
     def classify(
         self,
         rgb_images:  List[bytes],   # 8 JPEG bytes (white light, 8 angles)
         uv_images:   List[bytes],   # 8 JPEG bytes (UV light, 8 angles)
-        gas_delta:   float,         # kΩ drop from BME688
-        rot_suspicion: str,         # LOW / MEDIUM / HIGH
+        gas_delta:   float,         # kOhm drop from BME688
+        rot_suspicion: str,         # HEALTHY / EARLY_ROT / SEVERE_ROT / LOW / MEDIUM / HIGH
+        gas_ratio_pct: float = 0.0, # relative percentage drop (scale-invariant)
+        gas_slope_per_sec: float = 0.0, # rate of change dR/dt (kOhm/s)
     ) -> dict:
         """
         Full multi-modal classification.
@@ -287,10 +306,11 @@ class AIClassifier:
         """
         start = time.time()
 
-        if self._onnx.available:
-            result = self._neural_classify(rgb_images, uv_images, gas_delta, rot_suspicion)
+        # Choose mode based on which models are available
+        if self._rgb_onnx.available or self._uv_onnx.available:
+            result = self._neural_classify(rgb_images, uv_images, gas_delta, rot_suspicion, gas_ratio_pct, gas_slope_per_sec)
         else:
-            result = self._rule_classify(rgb_images, uv_images, gas_delta, rot_suspicion)
+            result = self._rule_classify(rgb_images, uv_images, gas_delta, rot_suspicion, gas_ratio_pct, gas_slope_per_sec)
 
         result["inference_ms"] = round((time.time() - start) * 1000, 1)
         log.info("Classification complete: %s (%.1f%%) in %.0fms",
@@ -299,7 +319,7 @@ class AIClassifier:
 
     # ── Rule-Based Classifier ─────────────────────────────────────────────────
 
-    def _rule_classify(self, rgb_images, uv_images, gas_delta, rot_suspicion) -> dict:
+    def _rule_classify(self, rgb_images, uv_images, gas_delta, rot_suspicion, gas_ratio_pct=0.0, gas_slope_per_sec=0.0) -> dict:
         """
         Heuristic multi-pillar fusion without a trained model.
         Active until you download datasets and train the ONNX model.
@@ -309,10 +329,10 @@ class AIClassifier:
         uv_feats  = [ImageAnalyzer.analyze_uv(img)  for img in uv_images]
         agg       = ImageAnalyzer.aggregate_features(rgb_feats, uv_feats)
 
-        # Pillar scores (0–1, higher = worse)
+        # Pillar scores (0-1, higher = more rotten)
         p1_score = agg["rgb_rot_score"]            # RGB surface rot
         p2_score = agg["uv_fluorescence_score"]    # UV fluorescence
-        p3_score = self._gas_score(gas_delta)      # Gas VOC
+        p3_score = self._gas_score(gas_delta, gas_ratio_pct, gas_slope_per_sec)  # Enhanced Gas VOC
 
         # Weighted fusion
         fused = p1_score * 0.40 + p2_score * 0.35 + p3_score * 0.25
@@ -351,56 +371,146 @@ class AIClassifier:
             "agg_features": agg,
         }
 
-    def _neural_classify(self, rgb_images, uv_images, gas_delta, rot_suspicion) -> dict:
+    def _neural_classify(self, rgb_images, uv_images, gas_delta, rot_suspicion, gas_ratio_pct=0.0, gas_slope_per_sec=0.0) -> dict:
         """
-        ONNX model-based classification (active when model file is present).
-        Runs inference on each of the 16 images and votes.
+        Dual-model ONNX classification (Pillar 1 = RGB model, Pillar 2 = UV model).
+
+        - RGB model runs on the 8 white-light frames -> p1_score
+        - UV  model runs on the 8 UV-A frames        -> p2_score
+        - If a model is missing, that pillar falls back to rule-based heuristic
+        - Gas sensor (BME688) uses enhanced multi-feature analytics -> p3_score
+        - Final fusion: p1*0.40 + p2*0.35 + p3*0.25
         """
         import numpy as np
-        votes = {"HEALTHY": 0, "ROTTEN": 0, "UNCERTAIN": 0}
-        confs = []
 
-        for img in rgb_images + uv_images:
-            label, conf = self._onnx.predict(img)
-            if label in votes:
-                votes[label] += conf
-                confs.append(conf)
+        LABEL_ROT_SCORE = {"HEALTHY": 0.0, "UNCERTAIN": 0.5, "ROTTEN": 1.0, "UNKNOWN": 0.5}
 
-        # Majority vote by accumulated confidence
-        status = max(votes, key=votes.get)
-        confidence = round((votes[status] / max(sum(confs), 1e-9)) * 100, 1)
-
-        # Gas override: if gas strongly says rotten, don't override to healthy
-        p3 = self._gas_score(gas_delta)
-        if p3 > 0.7 and status == "HEALTHY":
-            status = "UNCERTAIN"
-            confidence = min(confidence, 70.0)
-            reason = (f"Neural model voted HEALTHY but gas sensor detected strong VOC "
-                      f"signal (ΔGas={gas_delta:.1f} kΩ). Result degraded to UNCERTAIN.")
+        # ── Pillar 1: RGB model ───────────────────────────────────────────────
+        if self._rgb_onnx.available and rgb_images:
+            rgb_scores = [LABEL_ROT_SCORE.get(self._rgb_onnx.predict(img)[0], 0.5)
+                          for img in rgb_images]
+            p1_score = float(np.mean(rgb_scores))
+            p1_source = "rgb_onnx_v1"
         else:
-            reason = (f"Neural model consensus: {status} ({confidence:.1f}% confidence). "
-                      f"Gas sensor suspicion: {rot_suspicion} (ΔGas={gas_delta:.1f} kΩ).")
+            # Fallback to heuristic for RGB
+            rgb_feats = [ImageAnalyzer.analyze_rgb(img) for img in rgb_images]
+            uv_feats  = [ImageAnalyzer.analyze_uv(img)  for img in uv_images]
+            agg       = ImageAnalyzer.aggregate_features(rgb_feats, uv_feats)
+            p1_score  = agg["rgb_rot_score"]
+            p1_source = "rgb_rule_based"
+
+        # ── Pillar 2: UV model ────────────────────────────────────────────────
+        if self._uv_onnx.available and uv_images:
+            uv_scores = [LABEL_ROT_SCORE.get(self._uv_onnx.predict(img)[0], 0.5)
+                         for img in uv_images]
+            p2_score = float(np.mean(uv_scores))
+            p2_source = "uv_onnx_v1"
+        else:
+            # Fallback to heuristic for UV
+            if not self._rgb_onnx.available:
+                # agg already computed above
+                p2_score = agg.get("uv_fluorescence_score", 0.0)
+            else:
+                uv_feats  = [ImageAnalyzer.analyze_uv(img) for img in uv_images]
+                rgb_feats = [ImageAnalyzer.analyze_rgb(img) for img in rgb_images]
+                agg       = ImageAnalyzer.aggregate_features(rgb_feats, uv_feats)
+                p2_score  = agg["uv_fluorescence_score"]
+            p2_source = "uv_rule_based"
+
+        # ── Pillar 3: BME688 gas — enhanced multi-feature analytics ───────────
+        p3_score = self._gas_score(gas_delta, gas_ratio_pct, gas_slope_per_sec)
+
+        # ── Weighted fusion ───────────────────────────────────────────────────
+        fused = p1_score * 0.40 + p2_score * 0.35 + p3_score * 0.25
+
+        confidence_rotten  = fused * 100.0
+        confidence_healthy = (1.0 - fused) * 100.0
+
+        if fused >= 0.55:
+            status     = "ROTTEN"
+            confidence = confidence_rotten
+        elif fused <= 0.30:
+            status     = "HEALTHY"
+            confidence = confidence_healthy
+        else:
+            status     = "UNCERTAIN"
+            confidence = 100.0 - abs(confidence_rotten - 50.0) * 2
+
+        confidence = round(min(99.9, max(50.1, confidence)), 1)
+
+        # Gas override: strong VOC signal overrules a HEALTHY neural decision
+        if p3_score > 0.7 and status == "HEALTHY":
+            status     = "UNCERTAIN"
+            confidence = min(confidence, 70.0)
+            reason = (
+                f"Neural models voted HEALTHY (RGB: {p1_score:.2f}, UV: {p2_score:.2f}) "
+                f"but gas sensor detected strong VOC signal "
+                f"(DeltaGas={gas_delta:.1f} kOhm, Drop={gas_ratio_pct:.1f}%, Slope={gas_slope_per_sec:+.4f}, {rot_suspicion}). "
+                f"Result degraded to UNCERTAIN."
+            )
+        else:
+            reason = (
+                f"RGB model ({p1_source}) rot score: {p1_score:.2f}. "
+                f"UV model ({p2_source}) fluorescence score: {p2_score:.2f}. "
+                f"Gas sensor: {rot_suspicion} (DeltaGas={gas_delta:.1f} kOhm, Drop={gas_ratio_pct:.1f}%, Slope={gas_slope_per_sec:+.4f}). "
+                f"Fused score: {fused:.2f} -> {status}."
+            )
+
+        model_used = f"rgb={p1_source},uv={p2_source},gas=enhanced_analytics"
 
         return {
             "status":      status,
             "confidence":  confidence,
             "reason":      reason,
-            "model_used":  "onnx_agriscan360_v1",
-            "pillar_scores": {"gas_voc": round(p3, 3), "neural_votes": votes},
+            "model_used":  model_used,
+            "pillar_scores": {
+                "rgb_neural": round(p1_score, 3),
+                "uv_neural":  round(p2_score, 3),
+                "gas_voc":    round(p3_score, 3),
+                "fused":      round(fused, 3),
+            },
         }
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
     @staticmethod
-    def _gas_score(gas_delta: float) -> float:
-        """Convert gas kΩ delta to 0–1 rot probability score."""
-        if gas_delta >= ROTTEN_GAS_DELTA_HIGH:
-            return min(1.0, gas_delta / 10.0)   # Saturates at 10 kΩ drop
-        elif gas_delta >= ROTTEN_GAS_DELTA_MED:
-            return 0.4
-        elif gas_delta > 0:
-            return 0.1
-        return 0.0   # No gas change (healthy or baseline error)
+    def _gas_score(gas_delta: float, gas_ratio_pct: float = 0.0, gas_slope_per_sec: float = 0.0) -> float:
+        """
+        Convert gas analytics (delta, percentage drop, slope) to 0–1 rot probability score.
+        Significantly more accurate than delta alone:
+          1. gas_ratio_pct provides scale-invariance across room baseline differences.
+          2. gas_slope_per_sec distinguishes active VOC degassing from static baseline shifts.
+        """
+        if gas_ratio_pct > 0:
+            if gas_ratio_pct >= 22.0:
+                base_score = 0.95
+            elif gas_ratio_pct >= 15.0:
+                base_score = 0.80
+            elif gas_ratio_pct >= 9.0:
+                base_score = 0.50
+            elif gas_ratio_pct >= 5.0:
+                base_score = 0.25
+            else:
+                base_score = 0.05
+        else:
+            if gas_delta >= ROTTEN_GAS_DELTA_HIGH:
+                base_score = min(1.0, gas_delta / 10.0)
+            elif gas_delta >= ROTTEN_GAS_DELTA_MED:
+                base_score = 0.40
+            elif gas_delta > 0:
+                base_score = 0.10
+            else:
+                base_score = 0.0
+
+        # Rate of change modifier: steep negative slope confirms active fruit decomposition
+        if gas_slope_per_sec < -0.15:
+            base_score = min(1.0, base_score + 0.15)
+        elif gas_slope_per_sec < -0.05:
+            base_score = min(1.0, base_score + 0.08)
+        elif gas_slope_per_sec > 0.04 and base_score > 0.2:
+            base_score = max(0.05, base_score - 0.12)
+
+        return round(base_score, 3)
 
     @staticmethod
     def _build_reason(status, p1, p2, p3, agg, gas_delta, rot_suspicion) -> str:
@@ -413,13 +523,13 @@ class AIClassifier:
         if p2 > 0.3:
             parts.append(
                 f"UV fluorescence detected {agg['uv_green_ratio']*100:.0f}% green and "
-                f"{agg['uv_yellow_ratio']*100:.0f}% yellow glow — fungal mould indicator "
+                f"{agg['uv_yellow_ratio']*100:.0f}% yellow glow -- fungal mould indicator "
                 f"(Pillar 2 UV-A 365nm)"
             )
         if p3 > 0.1:
             parts.append(
-                f"BME688 VOC gas resistance dropped {gas_delta:.1f} kΩ "
-                f"({rot_suspicion} suspicion) — internal decomposition indicator (Pillar 3)"
+                f"BME688 VOC gas resistance dropped {gas_delta:.1f} kOhm "
+                f"({rot_suspicion} suspicion) -- internal decomposition indicator (Pillar 3)"
             )
         if not parts:
             parts.append("No significant rot indicators detected across all three sensor pillars")

@@ -74,10 +74,10 @@ class OLEDDisplay:
 
     def _sim_print(self, *lines):
         """Print OLED content to console in simulation mode."""
-        print("\n┌─── OLED DISPLAY ───────────────┐")
+        print("\n+--- OLED DISPLAY ---------------+")
         for line in lines:
-            print(f"│  {line:<30} │")
-        print("└────────────────────────────────┘")
+            print(f"|  {line:<30} |")
+        print("+--------------------------------+")
 
     # ── Display methods ────────────────────────────────────────────────────────
 
@@ -123,7 +123,7 @@ class OLEDDisplay:
             draw.rectangle([(4, 44), (4 + bar_width, 56)], fill="white")
 
         if self._simulate:
-            bar = "█" * (stop + 1) + "░" * (total - stop - 1)
+            bar = "#" * (stop + 1) + "-" * (total - stop - 1)
             self._sim_print("SCANNING...", msg, bar)
         else:
             self._draw(draw_fn)

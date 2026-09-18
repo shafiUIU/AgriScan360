@@ -18,9 +18,15 @@ STATIC_DIR = os.path.join(BASE_DIR, "static")
 SCANS_DIR  = os.path.join(STATIC_DIR, "scans")   # Scan images saved here: scans/{scan_id}/
 
 # ── AI Engine ─────────────────────────────────────────────────────────────────
-# When you train a real model, put the ONNX file here and update MODEL_PATH
-MODEL_PATH = os.path.join(BASE_DIR, "model", "agriscan360.onnx")
-USE_AI_MODEL = os.path.exists(MODEL_PATH)         # Auto-detects if model file is present
+# Two separate ONNX models — RGB (white-light) and UV-A (fluorescence).
+# Both are auto-detected from the models/ folder.
+# Place trained .onnx files from Google Colab here to activate neural mode.
+MODELS_DIR      = os.path.join(BASE_DIR, "models")
+RGB_MODEL_PATH  = os.path.join(MODELS_DIR, "rgb_agriscan_v1.onnx")
+UV_MODEL_PATH   = os.path.join(MODELS_DIR, "uv_agriscan_v1.onnx")
+USE_RGB_MODEL   = os.path.exists(RGB_MODEL_PATH)   # Auto-detects RGB model
+USE_UV_MODEL    = os.path.exists(UV_MODEL_PATH)    # Auto-detects UV model
+USE_AI_MODEL    = USE_RGB_MODEL or USE_UV_MODEL    # True if at least one model present
 
 # ── Classification Thresholds ─────────────────────────────────────────────────
 # These control the rule-based classifier (used until a real model is trained)

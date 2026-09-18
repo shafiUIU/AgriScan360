@@ -124,13 +124,14 @@ class CameraController:
         """
         log.debug("Capturing pair at stop %d/8", stop_index + 1)
 
-        with lights.capture_white():
+        angle = stop_index * 45
+        with lights.capture_white(stop_index=stop_index, angle=angle):
             rgb_bytes = self.capture_jpeg()
 
-        # Brief pause to ensure UV-A LEDs are fully off before UV capture
+        # Brief pause to ensure LEDs switch cleanly
         time.sleep(0.1)
 
-        with lights.capture_uv():
+        with lights.capture_uv(stop_index=stop_index, angle=angle):
             uv_bytes = self.capture_jpeg()
 
         return rgb_bytes, uv_bytes

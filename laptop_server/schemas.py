@@ -30,49 +30,68 @@ class ScanResult(BaseModel):
     Response returned to the Raspberry Pi after classification.
     Also used by the WebSocket live push.
     """
-    scan_id:        int
-    produce_name:   str
-    status:         str    # HEALTHY | ROTTEN | UNCERTAIN | ERROR
-    confidence:     float  # 0.0 – 100.0
-    reason:         str
-    gas_delta:      float  # kΩ drop (positive = rot gases)
-    rot_suspicion:  str    # LOW | MEDIUM | HIGH
-    model_used:     str
-    created_at:     datetime
+    scan_id:             int
+    produce_name:        str
+    status:              str    # HEALTHY | ROTTEN | UNCERTAIN | ERROR
+    confidence:          float  # 0.0 – 100.0
+    reason:              str
+    gas_delta:           float  # kOhm drop (positive = rot gases)
+    rot_suspicion:       str    # HEALTHY | EARLY_ROT | SEVERE_ROT | NOT_INSTALLED
+    gas_ratio_pct:       Optional[float] = None
+    gas_slope_per_sec:   Optional[float] = None
+    gas_min_kohms:       Optional[float] = None
+    gas_max_kohms:       Optional[float] = None
+    gas_mean_kohms:      Optional[float] = None
+    gas_std_kohms:       Optional[float] = None
+    model_used:          str
+    created_at:          datetime
 
 
 class ScanSummary(BaseModel):
     """Compact row for the scan history table."""
-    id:           int
-    produce_name: str
-    status:       str
-    confidence:   float
-    gas_delta:    float
-    rot_suspicion: str
-    temperature_c: Optional[float]
-    humidity_pct:  Optional[float]
-    created_at:   datetime
-    image_count:  int = 0
+    id:                  int
+    produce_name:        str
+    status:              str
+    confidence:          float
+    gas_delta:           float
+    rot_suspicion:       str
+    gas_ratio_pct:       Optional[float] = None
+    gas_slope_per_sec:   Optional[float] = None
+    temperature_c:       Optional[float] = None
+    humidity_pct:        Optional[float] = None
+    pressure_hpa:        Optional[float] = None
+    created_at:          datetime
+    image_count:         int = 0
 
     model_config = ConfigDict(from_attributes=True)
 
 
 class ScanDetail(BaseModel):
     """Full scan detail including all 16 images — for the detail modal."""
-    id:             int
-    produce_name:   str
-    status:         str
-    confidence:     float
-    reason:         Optional[str]
-    gas_delta:      float
-    rot_suspicion:  str
-    temperature_c:  Optional[float]
-    humidity_pct:   Optional[float]
-    scan_duration_s: Optional[float]
-    model_used:     Optional[str]
-    is_simulated:   bool
-    created_at:     datetime
-    completed_at:   Optional[datetime]
+    id:                  int
+    produce_name:        str
+    status:              str
+    confidence:          float
+    reason:              Optional[str]
+    gas_delta:           float
+    rot_suspicion:       str
+    baseline_gas_kohms:  Optional[float] = None
+    post_scan_gas_kohms: Optional[float] = None
+    gas_min_kohms:       Optional[float] = None
+    gas_max_kohms:       Optional[float] = None
+    gas_mean_kohms:      Optional[float] = None
+    gas_std_kohms:       Optional[float] = None
+    gas_ratio_pct:       Optional[float] = None
+    gas_slope_per_sec:   Optional[float] = None
+    sample_count:        Optional[int] = None
+    temperature_c:       Optional[float] = None
+    humidity_pct:        Optional[float] = None
+    pressure_hpa:        Optional[float] = None
+    scan_duration_s:     Optional[float] = None
+    model_used:          Optional[str] = None
+    is_simulated:        bool
+    created_at:          datetime
+    completed_at:        Optional[datetime]
     images:         List[ScanImageOut] = []
 
     model_config = ConfigDict(from_attributes=True)

@@ -1,26 +1,24 @@
 """
-gas_sensor.py — Bosch BME688 Gas / Environmental Sensor Driver
-================================================================
-Hardware:  Bosch BME688 (I2C address 0x77)
+gas_sensor.py — Bosch BME688 Gas / Environmental Sensor Driver (Adaptive)
+===========================================================================
+Hardware:  Bosch BME688 (I2C address 0x77 or 0x76)
 Wiring:    VCC→3.3V (Pin1), GND→GND (Pin6), SDA→GPIO2 (Pin3), SCL→GPIO3 (Pin5)
 
-Measures:
-    - Temperature (°C)
-    - Humidity    (% RH)
-    - Pressure    (hPa)
-    - Gas resistance (kΩ)  ← Primary freshness/rot indicator
+Chamber Specifications:
+    Volume: 27 Liters (closed containment box)
 
-Strategy:
-    1. Baseline = read gas resistance BEFORE placing fruit (empty chamber)
-    2. Post-scan = read gas resistance AFTER 8-angle scan (~20 seconds)
-    3. Delta = baseline − post_scan  (positive drop = VOC gas buildup = rot)
-
-Library: pip install bme680   (works for BME688 in basic mode without AI features)
+Adaptive Features:
+    1. Auto-Detection: Automatically probes I2C for BME688.
+       If NOT found: assumes BME is not implemented yet, logs notice, and
+       returns neutral zero delta without crashing.
+    2. Continuous Sniffing: Runs in a background thread sampling VOC gas
+       resistance continuously inside the 27L box while the 16 photos are taken.
 """
 
 import time
 import logging
-from typing import Optional
+import threading
+from typing import Optional, List
 from dataclasses import dataclass, field
 
 log = logging.getLogger(__name__)
@@ -30,11 +28,12 @@ try:
     BME680_AVAILABLE = True
 except ImportError:
     BME680_AVAILABLE = False
-    log.warning("bme680 library not found. Using simulation mode.")
 
 from config import (
-    BME688_ADDRESS,
-    GAS_BASELINE_READS, GAS_BASELINE_DELAY, GAS_DELTA_THRESHOLD
+    BME688_I2C_ADDRESSES,
+    GAS_BASELINE_READS, GAS_BASELINE_DELAY,
+    GAS_SNIFF_INTERVAL_SEC, GAS_DELTA_THRESHOLD,
+    CHAMBER_VOLUME_LITERS
 )
 
 
@@ -45,80 +44,126 @@ class GasReading:
     humidity:    float = 0.0    # %RH
     pressure:    float = 0.0    # hPa
     gas_ohms:    float = 0.0    # Ohms (raw)
+    timestamp:   float = 0.0
 
     @property
     def gas_kohms(self) -> float:
-        """Gas resistance in kΩ for human-readable display."""
         return round(self.gas_ohms / 1000, 2)
 
 
 @dataclass
 class ScanGasResult:
-    """Gas delta computed across one full scan cycle."""
+    """Rich multi-feature gas analytics across the 27L containment scan."""
     baseline_kohms: float = 0.0
     post_scan_kohms: float = 0.0
-    delta_kohms: float = 0.0           # baseline − post_scan (positive = gas detected)
-    rot_suspicion: str = "LOW"         # LOW / MEDIUM / HIGH
-    baseline_temp: float = 0.0
-    baseline_humidity: float = 0.0
+    delta_kohms: float = 0.0           # baseline - post_scan (positive = rot gas drop)
+    gas_min_kohms: float = 0.0         # minimum resistance observed during scan
+    gas_max_kohms: float = 0.0         # maximum resistance observed during scan
+    gas_mean_kohms: float = 0.0        # mean resistance across full scan
+    gas_std_kohms: float = 0.0         # standard deviation of gas resistance
+    gas_ratio_pct: float = 0.0         # (baseline - min) / baseline * 100% (scale-invariant drop)
+    gas_slope_per_sec: float = 0.0     # linear regression rate dR/dt (kOhm/s, negative = active decay)
+    temperature_c: float = 0.0         # average ambient temperature (°C)
+    humidity_pct: float = 0.0          # average ambient relative humidity (%RH)
+    pressure_hpa: float = 0.0          # ambient barometric pressure (hPa)
+    sample_count: int = 0              # total gas snapshots collected across 16-frame cycle
+    rot_suspicion: str = "HEALTHY"     # HEALTHY / EARLY_ROT / SEVERE_ROT / NOT_INSTALLED
+    installed: bool = True
+
+    # Backwards compatibility properties
+    @property
+    def baseline_temp(self) -> float:
+        return self.temperature_c
+
+    @property
+    def baseline_humidity(self) -> float:
+        return self.humidity_pct
 
     def to_dict(self) -> dict:
         return {
-            "baseline_kohms": self.baseline_kohms,
-            "post_scan_kohms": self.post_scan_kohms,
-            "delta_kohms": self.delta_kohms,
+            "baseline_kohms": round(self.baseline_kohms, 2),
+            "post_scan_kohms": round(self.post_scan_kohms, 2),
+            "delta_kohms": round(self.delta_kohms, 2),
+            "gas_min_kohms": round(self.gas_min_kohms, 2),
+            "gas_max_kohms": round(self.gas_max_kohms, 2),
+            "gas_mean_kohms": round(self.gas_mean_kohms, 2),
+            "gas_std_kohms": round(self.gas_std_kohms, 2),
+            "gas_ratio_pct": round(self.gas_ratio_pct, 2),
+            "gas_slope_per_sec": round(self.gas_slope_per_sec, 4),
+            "sample_count": self.sample_count,
             "rot_suspicion": self.rot_suspicion,
-            "temperature_c": self.baseline_temp,
-            "humidity_pct": self.baseline_humidity,
+            "temperature_c": round(self.temperature_c, 1),
+            "humidity_pct": round(self.humidity_pct, 1),
+            "pressure_hpa": round(self.pressure_hpa, 1),
+            "installed": self.installed,
         }
 
 
 class GasSensor:
     """
-    High-level BME688 interface with baseline/delta gas analysis.
-    Falls back to simulation mode if hardware is not connected (useful for testing on PC).
+    High-level BME688 interface with adaptive auto-detection and continuous sniffing.
     """
 
     def __init__(self, simulate: bool = False):
-        self._simulate = simulate or not BME680_AVAILABLE
+        self.simulate = simulate
+        self.installed = False
         self._sensor = None
         self._baseline: Optional[GasReading] = None
+        self._sniff_thread: Optional[threading.Thread] = None
+        self._sniffing = False
+        self._readings: List[GasReading] = []
 
-        if not self._simulate:
-            self._init_sensor()
+        if not self.simulate and BME680_AVAILABLE:
+            self._probe_and_init()
+        elif self.simulate:
+            self.installed = True
+            log.info("GasSensor: Running in SIMULATION mode (synthetic VOC gas generation)")
+        else:
+            log.info("GasSensor: BME688 library not available and hardware not detected. "
+                     "Assuming BME is not yet implemented.")
 
-    def _init_sensor(self):
-        """Initialize and configure BME688."""
-        try:
-            self._sensor = bme680.BME680(bme680.I2C_ADDR_PRIMARY)
-            self._sensor.set_humidity_oversample(bme680.OS_2X)
-            self._sensor.set_pressure_oversample(bme680.OS_4X)
-            self._sensor.set_temperature_oversample(bme680.OS_8X)
-            self._sensor.set_filter(bme680.FILTER_SIZE_3)
-            self._sensor.set_gas_status(bme680.ENABLE_GAS_MEAS)
-            self._sensor.set_gas_heater_temperature(320)   # °C  (optimal for VOC)
-            self._sensor.set_gas_heater_duration(150)      # ms
-            self._sensor.select_gas_heater_profile(0)
-            log.info("BME688 initialized successfully at address 0x%02X", BME688_ADDRESS)
-        except Exception as exc:
-            log.error("BME688 init failed: %s — switching to simulation mode", exc)
-            self._simulate = True
-            self._sensor = None
+    def _probe_and_init(self):
+        """Auto-probe I2C addresses (0x77, 0x76) to detect BME688."""
+        for addr in BME688_I2C_ADDRESSES:
+            try:
+                self._sensor = bme680.BME680(addr)
+                self._sensor.set_humidity_oversample(bme680.OS_2X)
+                self._sensor.set_pressure_oversample(bme680.OS_4X)
+                self._sensor.set_temperature_oversample(bme680.OS_8X)
+                self._sensor.set_filter(bme680.FILTER_SIZE_3)
+                self._sensor.set_gas_status(bme680.ENABLE_GAS_MEAS)
+                self._sensor.set_gas_heater_temperature(320)   # 320°C for VOC
+                self._sensor.set_gas_heater_duration(150)
+                self._sensor.select_gas_heater_profile(0)
+                self.installed = True
+                log.info("BME688 detected and initialized successfully at I2C address 0x%02X (27L box mode)", addr)
+                return
+            except Exception:
+                continue
 
-    # ── Core read ─────────────────────────────────────────────────────────────
+        log.info("BME688 not detected on I2C (probed %s). "
+                 "Assuming BME sensor has not been implemented yet.",
+                 [hex(a) for a in BME688_I2C_ADDRESSES])
+        self.installed = False
+        self._sensor = None
+
+    # ── Single Read ───────────────────────────────────────────────────────────
 
     def _read_once(self) -> GasReading:
-        """Read one snapshot from the sensor (or simulate)."""
-        if self._simulate:
+        now = time.time()
+        if self.simulate:
             import random
             return GasReading(
-                temperature=random.uniform(25, 32),
-                humidity=random.uniform(55, 70),
-                pressure=random.uniform(1008, 1013),
-                gas_ohms=random.uniform(40_000, 120_000),
+                temperature=round(random.uniform(24.0, 27.0), 1),
+                humidity=round(random.uniform(50.0, 65.0), 1),
+                pressure=round(random.uniform(1010.0, 1013.0), 1),
+                gas_ohms=random.uniform(50_000, 100_000),
+                timestamp=now,
             )
 
-        # Wait for valid data
+        if not self.installed or not self._sensor:
+            return GasReading(timestamp=now)
+
         for _ in range(10):
             if self._sensor.get_sensor_data() and self._sensor.data.heat_stable:
                 return GasReading(
@@ -126,72 +171,242 @@ class GasSensor:
                     humidity=self._sensor.data.humidity,
                     pressure=self._sensor.data.pressure,
                     gas_ohms=self._sensor.data.gas_resistance,
+                    timestamp=now,
                 )
-            time.sleep(0.3)
+            time.sleep(0.1)
 
-        # Fallback if heat never stabilized
         self._sensor.get_sensor_data()
         return GasReading(
-            temperature=getattr(self._sensor.data, 'temperature', 0),
-            humidity=getattr(self._sensor.data, 'humidity', 0),
-            pressure=getattr(self._sensor.data, 'pressure', 0),
-            gas_ohms=getattr(self._sensor.data, 'gas_resistance', 0),
+            temperature=getattr(self._sensor.data, 'temperature', 0.0),
+            humidity=getattr(self._sensor.data, 'humidity', 0.0),
+            pressure=getattr(self._sensor.data, 'pressure', 0.0),
+            gas_ohms=getattr(self._sensor.data, 'gas_resistance', 0.0),
+            timestamp=now,
         )
 
-    def read_averaged(self, count: int = GAS_BASELINE_READS,
-                      delay: float = GAS_BASELINE_DELAY) -> GasReading:
-        """Take `count` readings and return the averaged result."""
-        readings = []
-        for _ in range(count):
-            readings.append(self._read_once())
-            time.sleep(delay)
-        return GasReading(
-            temperature=sum(r.temperature for r in readings) / count,
-            humidity=sum(r.humidity    for r in readings) / count,
-            pressure=sum(r.pressure    for r in readings) / count,
-            gas_ohms=sum(r.gas_ohms    for r in readings) / count,
-        )
-
-    # ── Baseline management ───────────────────────────────────────────────────
+    # ── Baseline Calibration ──────────────────────────────────────────────────
 
     def calibrate_baseline(self) -> GasReading:
-        """
-        Read baseline gas resistance from EMPTY chamber.
-        Call this BEFORE placing fruit on the turntable.
-        """
-        log.info("Calibrating BME688 baseline (chamber must be empty)...")
-        self._baseline = self.read_averaged()
-        log.info("Baseline: %.1f kΩ  T=%.1f°C  RH=%.1f%%",
+        """Read baseline gas resistance before fruit scan."""
+        if not self.installed:
+            self._baseline = GasReading(timestamp=time.time())
+            return self._baseline
+
+        log.info("Calibrating BME688 baseline inside 27L chamber...")
+        readings = [self._read_once() for _ in range(GAS_BASELINE_READS)]
+        avg_temp = sum(r.temperature for r in readings) / len(readings)
+        avg_hum  = sum(r.humidity for r in readings) / len(readings)
+        avg_pres = sum(r.pressure for r in readings) / len(readings)
+        avg_gas  = sum(r.gas_ohms for r in readings) / len(readings)
+
+        self._baseline = GasReading(
+            temperature=round(avg_temp, 1),
+            humidity=round(avg_hum, 1),
+            pressure=round(avg_pres, 1),
+            gas_ohms=round(avg_gas, 1),
+            timestamp=time.time(),
+        )
+        log.info("BME688 Baseline: %.1f kOhm | Temp: %.1f°C | Humidity: %.1f%%",
                  self._baseline.gas_kohms, self._baseline.temperature, self._baseline.humidity)
         return self._baseline
 
-    def compute_delta(self) -> ScanGasResult:
-        """
-        Read post-scan gas and compute delta vs baseline.
-        Call AFTER completing the full 8-angle scan.
-        """
-        if self._baseline is None:
-            log.warning("No baseline set — running quick baseline now")
-            self.calibrate_baseline()
+    # ── Continuous Sniffing (Background Thread) ───────────────────────────────
 
-        post = self.read_averaged(count=3, delay=0.5)
-        delta = self._baseline.gas_kohms - post.gas_kohms   # positive = gas drop = rot
+    def start_continuous_sniffing(self, interval: float = GAS_SNIFF_INTERVAL_SEC):
+        """
+        Starts a background thread that sniffs the 27L chamber continuously
+        while the 8-stop / 16-capture rotation takes place.
+        """
+        if not self.installed:
+            return
 
-        # Classify suspicion level
-        if delta < 2.0:
-            suspicion = "LOW"
-        elif delta < GAS_DELTA_THRESHOLD:
-            suspicion = "MEDIUM"
+        self._readings = []
+        self._sniffing = True
+
+        def _sniff_worker():
+            log.info("BME688: Continuous sniffing started inside 27L box...")
+            while self._sniffing:
+                r = self._read_once()
+                self._readings.append(r)
+                time.sleep(interval)
+            log.info("BME688: Sniffing stopped. Collected %d samples.", len(self._readings))
+
+        self._sniff_thread = threading.Thread(target=_sniff_worker, daemon=True)
+        self._sniff_thread.start()
+
+    def stop_continuous_sniffing(self) -> ScanGasResult:
+        """
+        Stops the sniffing thread and computes rich multi-feature gas analytics across the 16-photo cycle.
+        """
+        if not self.installed:
+            return ScanGasResult(
+                baseline_kohms=0.0,
+                post_scan_kohms=0.0,
+                delta_kohms=0.0,
+                gas_min_kohms=0.0,
+                gas_max_kohms=0.0,
+                gas_mean_kohms=0.0,
+                gas_std_kohms=0.0,
+                gas_ratio_pct=0.0,
+                gas_slope_per_sec=0.0,
+                temperature_c=0.0,
+                humidity_pct=0.0,
+                pressure_hpa=0.0,
+                sample_count=0,
+                rot_suspicion="NOT_INSTALLED",
+                installed=False,
+            )
+
+        self._sniffing = False
+        if self._sniff_thread and self._sniff_thread.is_alive():
+            self._sniff_thread.join(timeout=2.0)
+
+        if not self._readings:
+            self._readings.append(self._read_once())
+
+        # Baseline
+        if self._baseline and self._baseline.gas_kohms > 0:
+            base_k = self._baseline.gas_kohms
+            base_t = self._baseline.temperature
+            base_h = self._baseline.humidity
+            base_p = self._baseline.pressure
         else:
-            suspicion = "HIGH"
+            first_n = self._readings[:min(3, len(self._readings))]
+            base_k = round(sum(r.gas_kohms for r in first_n) / len(first_n), 2)
+            base_t = round(sum(r.temperature for r in first_n) / len(first_n), 1)
+            base_h = round(sum(r.humidity for r in first_n) / len(first_n), 1)
+            base_p = round(sum(r.pressure for r in first_n) / len(first_n), 1)
 
-        result = ScanGasResult(
-            baseline_kohms=self._baseline.gas_kohms,
-            post_scan_kohms=post.gas_kohms,
-            delta_kohms=round(delta, 2),
-            rot_suspicion=suspicion,
-            baseline_temp=self._baseline.temperature,
-            baseline_humidity=self._baseline.humidity,
+        # Post-scan = average of last 3 samples
+        last_n = self._readings[-min(3, len(self._readings)):]
+        post_k = round(sum(r.gas_kohms for r in last_n) / len(last_n), 2)
+        delta_k = round(max(0.0, base_k - post_k), 2)
+
+        # Statistical features across ALL collected readings
+        res_list = [r.gas_kohms for r in self._readings if r.gas_kohms > 0]
+        time_list = [r.timestamp for r in self._readings if r.gas_kohms > 0]
+
+        if not res_list:
+            res_list = [post_k]
+            time_list = [time.time()]
+
+        gas_min = round(min(res_list), 2)
+        gas_max = round(max(res_list), 2)
+        gas_mean = round(sum(res_list) / len(res_list), 2)
+
+        # Standard deviation
+        if len(res_list) >= 2:
+            import statistics
+            gas_std = round(statistics.stdev(res_list), 2)
+        else:
+            gas_std = 0.0
+
+        # Relative drop ratio (%) = (baseline - min) / baseline * 100
+        if base_k > 0:
+            gas_ratio = round(max(0.0, (base_k - gas_min) / base_k * 100.0), 1)
+        else:
+            gas_ratio = 0.0
+
+        # Linear regression slope (dR/dt in kOhm/sec)
+        # Actively rotting fruit in sealed chamber exhibits a continuous downward slope
+        gas_slope = 0.0
+        if len(res_list) >= 3:
+            t0 = time_list[0]
+            rel_times = [t - t0 for t in time_list]
+            mean_t = sum(rel_times) / len(rel_times)
+            mean_r = sum(res_list) / len(res_list)
+            denom = sum((t - mean_t) ** 2 for t in rel_times)
+            if denom > 1e-6:
+                gas_slope = round(sum((t - mean_t) * (r - mean_r) for t, r in zip(rel_times, res_list)) / denom, 4)
+
+        # Environmental averages
+        avg_temp = round(sum(r.temperature for r in self._readings) / len(self._readings), 1)
+        avg_hum  = round(sum(r.humidity for r in self._readings) / len(self._readings), 1)
+        avg_pres = round(sum(r.pressure for r in self._readings) / len(self._readings), 1)
+
+        # Multi-tiered rot suspicion
+        if gas_ratio >= 20.0 or (gas_ratio >= 15.0 and gas_slope < -0.15) or delta_k >= 8.0:
+            suspicion = "SEVERE_ROT"
+        elif gas_ratio >= 10.0 or (gas_ratio >= 7.0 and gas_slope < -0.08) or delta_k >= 3.5:
+            suspicion = "EARLY_ROT"
+        else:
+            suspicion = "HEALTHY"
+
+        log.info(
+            "BME688 Analytics: Base=%.1fk | Post=%.1fk | Min=%.1fk | Max=%.1fk | Mean=%.1fk | Std=%.2fk | Drop=%.1f%% | Slope=%.4fk/s | Samples=%d | Suspicion=%s",
+            base_k, post_k, gas_min, gas_max, gas_mean, gas_std, gas_ratio, gas_slope, len(self._readings), suspicion
         )
-        log.info("Gas delta: %.2f kΩ  Suspicion: %s", delta, suspicion)
-        return result
+
+        return ScanGasResult(
+            baseline_kohms=base_k,
+            post_scan_kohms=post_k,
+            delta_kohms=delta_k,
+            gas_min_kohms=gas_min,
+            gas_max_kohms=gas_max,
+            gas_mean_kohms=gas_mean,
+            gas_std_kohms=gas_std,
+            gas_ratio_pct=gas_ratio,
+            gas_slope_per_sec=gas_slope,
+            temperature_c=avg_temp,
+            humidity_pct=avg_hum,
+            pressure_hpa=avg_pres,
+            sample_count=len(self._readings),
+            rot_suspicion=suspicion,
+            installed=True,
+        )
+
+    @staticmethod
+    def log_scan_dataset(scan_id: str, fruit_type: str, condition: str, gas_result: ScanGasResult, csv_path: str = None):
+        """
+        Appends complete 16-feature sensor snapshot to CSV for ML model building.
+        Creates file automatically if not present.
+        """
+        import os, csv
+        if csv_path is None:
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            csv_path = os.path.join(base_dir, "datasets", "bme688_telemetry_dataset.csv")
+
+        os.makedirs(os.path.dirname(csv_path), exist_ok=True)
+        file_exists = os.path.exists(csv_path)
+
+        fields = [
+            "scan_id", "fruit_type", "condition", "timestamp",
+            "temperature_c", "humidity_pct", "pressure_hpa",
+            "baseline_gas_kohms", "post_scan_gas_kohms", "delta_gas_kohms",
+            "gas_min_kohms", "gas_max_kohms", "gas_mean_kohms", "gas_std_kohms",
+            "gas_ratio_pct", "gas_slope_per_sec", "sample_count",
+            "rgb_image_count", "uv_image_count", "rot_suspicion"
+        ]
+
+        row = {
+            "scan_id": str(scan_id),
+            "fruit_type": str(fruit_type).lower(),
+            "condition": str(condition).lower(),
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "temperature_c": gas_result.temperature_c,
+            "humidity_pct": gas_result.humidity_pct,
+            "pressure_hpa": gas_result.pressure_hpa,
+            "baseline_gas_kohms": gas_result.baseline_kohms,
+            "post_scan_gas_kohms": gas_result.post_scan_kohms,
+            "delta_gas_kohms": gas_result.delta_kohms,
+            "gas_min_kohms": gas_result.gas_min_kohms,
+            "gas_max_kohms": gas_result.gas_max_kohms,
+            "gas_mean_kohms": gas_result.gas_mean_kohms,
+            "gas_std_kohms": gas_result.gas_std_kohms,
+            "gas_ratio_pct": gas_result.gas_ratio_pct,
+            "gas_slope_per_sec": gas_result.gas_slope_per_sec,
+            "sample_count": gas_result.sample_count,
+            "rgb_image_count": 8,
+            "uv_image_count": 8,
+            "rot_suspicion": gas_result.rot_suspicion,
+        }
+
+        try:
+            with open(csv_path, "a", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=fields)
+                if not file_exists:
+                    writer.writeheader()
+                writer.writerow(row)
+            log.info("Saved scan gas telemetry row to %s", csv_path)
+        except Exception as exc:
+            log.error("Failed to log scan dataset row: %s", exc)

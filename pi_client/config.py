@@ -5,7 +5,10 @@
 # Run `ipconfig` (Windows) or `ip a` (Linux) on the laptop to find its LAN IP.
 
 # ── Network ──────────────────────────────────────────────────────────────────
-LAPTOP_SERVER_URL = "http://192.168.1.100:8000"   # ← CHANGE THIS to your laptop's IP
+# Default to loopback (127.0.0.1) for Single-Device Standalone Pi operation.
+# Can be overridden by setting the AGRISCAN_SERVER_URL environment variable.
+import os
+LAPTOP_SERVER_URL = os.getenv("AGRISCAN_SERVER_URL", "http://10.210.73.32:8000")
 API_SCAN_ENDPOINT = f"{LAPTOP_SERVER_URL}/api/scan"
 API_HEALTH_ENDPOINT = f"{LAPTOP_SERVER_URL}/api/health"
 REQUEST_TIMEOUT_SEC = 30                            # seconds before declaring server offline
@@ -35,22 +38,25 @@ NUM_SCAN_STOPS     = 8       # 8 stops × 45° = 360°
 PULSE_DELAY        = 0.005   # seconds between step pulses (safe, smooth)
 RAMP_STEPS         = 10      # Number of steps to ramp up/down speed softly
 RAMP_START_DELAY   = 0.015   # Starting pulse delay during ramp
-SETTLE_DELAY       = 0.5     # seconds to let turntable settle before capture
+SETTLE_DELAY       = 1.5     # seconds to let turntable settle before capture
 
 # ── Camera Settings ────────────────────────────────────────────────────────────
 CAPTURE_RESOLUTION = (1920, 1080)   # Full HD capture
-JPEG_QUALITY       = 85             # JPEG quality 0-100
+JPEG_QUALITY       = 100             # JPEG quality 0-100
 WHITE_WARMUP_SEC   = 0.3            # time to let White LEDs warm up before capture
 UV_WARMUP_SEC      = 0.5            # time to let UV LEDs warm up before capture
 
-# ── Gas Sensor Settings ────────────────────────────────────────────────────────
-GAS_BASELINE_READS  = 5     # number of reads to average for baseline
-GAS_BASELINE_DELAY  = 1.0   # seconds between baseline reads
-GAS_DELTA_THRESHOLD = 5.0   # kΩ drop that triggers elevated-rot suspicion
+# ── Gas Sensor & Chamber Settings ─────────────────────────────────────────────
+CHAMBER_VOLUME_LITERS    = 27.0  # 27L closed container volume
+BME688_I2C_ADDRESSES     = [0x77, 0x76]  # Auto-probes both Bosch I2C addresses
+GAS_BASELINE_READS       = 10     # baseline averaging count
+GAS_BASELINE_DELAY       = 0.5   # seconds between baseline reads
+GAS_SNIFF_INTERVAL_SEC   = 0.5   # continuous sniffing sample interval during scan
+GAS_DELTA_THRESHOLD      = 5.0   # kΩ drop indicating high rot suspicion
+GAS_PRE_SCAN_INCUBATION_SEC = 0  # seconds to wait after sealing lid before sniffing (0 = skip)
 
-# ── Produce List (11 supported items) ─────────────────────────────────────────
+# ── Produce List (Strict Focus on 3 Target Produce Items) ─────────────────────
 SUPPORTED_PRODUCE = [
-    "Tomato", "Banana", "Eggplant", "Apple", "Carrot",
-    "Grape", "Cucumber", "Guava", "Orange", "Potato", "Pomegranate"
+    "Tomato", "Apple", "Eggplant"
 ]
-DEFAULT_PRODUCE = "Unknown"
+DEFAULT_PRODUCE = "Tomato"

@@ -34,11 +34,21 @@ class Scan(Base):
     confidence      = Column(Float,       nullable=False, default=0.0)   # 0.0–100.0
     reason          = Column(Text,        nullable=True)                  # Human-readable explanation
 
-    # Gas sensor data
-    gas_delta       = Column(Float,       nullable=False, default=0.0)   # kΩ drop
-    rot_suspicion   = Column(String(8),   nullable=False, default="LOW") # LOW/MEDIUM/HIGH
-    temperature_c   = Column(Float,       nullable=True)
-    humidity_pct    = Column(Float,       nullable=True)
+    # Gas sensor analytics
+    gas_delta           = Column(Float,       nullable=False, default=0.0)   # kOhm drop
+    baseline_gas_kohms  = Column(Float,       nullable=True)
+    post_scan_gas_kohms = Column(Float,       nullable=True)
+    gas_min_kohms       = Column(Float,       nullable=True)
+    gas_max_kohms       = Column(Float,       nullable=True)
+    gas_mean_kohms      = Column(Float,       nullable=True)
+    gas_std_kohms       = Column(Float,       nullable=True)
+    gas_ratio_pct       = Column(Float,       nullable=True)
+    gas_slope_per_sec   = Column(Float,       nullable=True)
+    sample_count        = Column(Integer,     nullable=True, default=0)
+    rot_suspicion       = Column(String(32),  nullable=False, default="HEALTHY")
+    temperature_c       = Column(Float,       nullable=True)
+    humidity_pct        = Column(Float,       nullable=True)
+    pressure_hpa        = Column(Float,       nullable=True)
 
     # Scan metadata
     scan_duration_s = Column(Float,       nullable=True)                  # Total scan time in seconds

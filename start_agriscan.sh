@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 # =============================================================================
-# AgriScan 360 — Single-Device Standalone Pi Startup Script
+# AgriScan 360 — Standalone Pi 5 Startup Script
 # =============================================================================
 # Run on the Raspberry Pi terminal:
 #   chmod +x start_agriscan.sh
 #   ./start_agriscan.sh
-# Or pass --simulate to run without hardware:
+#
+# Pass any custom flags (e.g. simulation or manual leds):
 #   ./start_agriscan.sh --simulate
+#   ./start_agriscan.sh --manual-leds
+#   ./start_agriscan.sh --produce Tomato
 # =============================================================================
 
 set -e

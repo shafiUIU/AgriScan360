@@ -37,33 +37,53 @@ def set_ws_manager(manager):
 
 @router.post("/scan", response_model=ScanResult)
 async def ingest_scan(
-    produce_name:   str  = Form(default="Unknown"),
-    gas_delta:      float = Form(default=0.0),
-    rot_suspicion:  str  = Form(default="LOW"),
-    temperature_c:  float = Form(default=0.0),
-    humidity_pct:   float = Form(default=0.0),
-    images:         List[UploadFile] = File(...),
-    db:             Session = Depends(get_db),
+    produce_name:        str   = Form(default="Unknown"),
+    gas_delta:           float = Form(default=0.0),
+    rot_suspicion:       str   = Form(default="HEALTHY"),
+    baseline_gas_kohms:  float = Form(default=0.0),
+    post_scan_gas_kohms: float = Form(default=0.0),
+    gas_min_kohms:       float = Form(default=0.0),
+    gas_max_kohms:       float = Form(default=0.0),
+    gas_mean_kohms:      float = Form(default=0.0),
+    gas_std_kohms:       float = Form(default=0.0),
+    gas_ratio_pct:       float = Form(default=0.0),
+    gas_slope_per_sec:   float = Form(default=0.0),
+    sample_count:        int   = Form(default=0),
+    temperature_c:       float = Form(default=0.0),
+    humidity_pct:        float = Form(default=0.0),
+    pressure_hpa:        float = Form(default=1013.25),
+    images:              List[UploadFile] = File(...),
+    db:                  Session = Depends(get_db),
 ):
     """
     Main scan ingestion endpoint.
     Called by the Raspberry Pi after completing the 8-stop 360° scan.
     """
     t_start = time.time()
-    log.info("Received scan: produce=%s, %d images, gas_delta=%.2f kΩ",
-             produce_name, len(images), gas_delta)
+    log.info("Received scan: produce=%s, %d images, gas_delta=%.2f kOhm, drop=%.1f%%, slope=%.4f",
+             produce_name, len(images), gas_delta, gas_ratio_pct, gas_slope_per_sec)
 
     if len(images) < 2:
         raise HTTPException(status_code=422, detail="At least 2 images required (1 RGB + 1 UV)")
 
     # ── 1. Create pending Scan record ──────────────────────────────────────────
     scan = Scan(
-        produce_name  = produce_name.strip().title() or "Unknown",
-        status        = "PENDING",
-        gas_delta     = gas_delta,
-        rot_suspicion = rot_suspicion,
-        temperature_c = temperature_c,
-        humidity_pct  = humidity_pct,
+        produce_name        = produce_name.strip().title() or "Unknown",
+        status              = "PENDING",
+        gas_delta           = gas_delta,
+        rot_suspicion       = rot_suspicion,
+        baseline_gas_kohms  = baseline_gas_kohms,
+        post_scan_gas_kohms = post_scan_gas_kohms,
+        gas_min_kohms       = gas_min_kohms,
+        gas_max_kohms       = gas_max_kohms,
+        gas_mean_kohms      = gas_mean_kohms,
+        gas_std_kohms       = gas_std_kohms,
+        gas_ratio_pct       = gas_ratio_pct,
+        gas_slope_per_sec   = gas_slope_per_sec,
+        sample_count        = sample_count,
+        temperature_c       = temperature_c,
+        humidity_pct        = humidity_pct,
+        pressure_hpa        = pressure_hpa,
     )
     db.add(scan)
     db.commit()
@@ -120,10 +140,12 @@ async def ingest_scan(
     try:
         classifier = get_classifier()
         ai_result  = classifier.classify(
-            rgb_images    = rgb_bytes_list,
-            uv_images     = uv_bytes_list,
-            gas_delta     = gas_delta,
-            rot_suspicion = rot_suspicion,
+            rgb_images        = rgb_bytes_list,
+            uv_images         = uv_bytes_list,
+            gas_delta         = gas_delta,
+            rot_suspicion     = rot_suspicion,
+            gas_ratio_pct     = gas_ratio_pct,
+            gas_slope_per_sec = gas_slope_per_sec,
         )
     except Exception as exc:
         log.error("AI classification error: %s", exc)
@@ -146,14 +168,16 @@ async def ingest_scan(
 
     # ── 5. Push WebSocket live event ──────────────────────────────────────────
     ws_payload = {
-        "event":        "scan_complete",
-        "scan_id":      scan_id,
-        "produce_name": scan.produce_name,
-        "status":       scan.status,
-        "confidence":   scan.confidence,
-        "reason":       scan.reason,
-        "gas_delta":    gas_delta,
-        "rot_suspicion": rot_suspicion,
+        "event":             "scan_complete",
+        "scan_id":           scan_id,
+        "produce_name":      scan.produce_name,
+        "status":            scan.status,
+        "confidence":        scan.confidence,
+        "reason":            scan.reason,
+        "gas_delta":         gas_delta,
+        "rot_suspicion":     rot_suspicion,
+        "gas_ratio_pct":     gas_ratio_pct,
+        "gas_slope_per_sec": gas_slope_per_sec,
     }
     if _ws_manager:
         await _ws_manager.broadcast(ws_payload)
@@ -162,13 +186,19 @@ async def ingest_scan(
              scan_id, scan.status, scan.confidence, scan.scan_duration_s)
 
     return ScanResult(
-        scan_id      = scan_id,
-        produce_name = scan.produce_name,
-        status       = scan.status,
-        confidence   = scan.confidence,
-        reason       = scan.reason or "",
-        gas_delta    = gas_delta,
-        rot_suspicion = rot_suspicion,
-        model_used   = scan.model_used or "rule_based_v1",
-        created_at   = scan.created_at,
+        scan_id           = scan_id,
+        produce_name      = scan.produce_name,
+        status            = scan.status,
+        confidence        = scan.confidence,
+        reason            = scan.reason or "",
+        gas_delta         = gas_delta,
+        rot_suspicion     = rot_suspicion,
+        gas_ratio_pct     = gas_ratio_pct,
+        gas_slope_per_sec = gas_slope_per_sec,
+        gas_min_kohms     = gas_min_kohms,
+        gas_max_kohms     = gas_max_kohms,
+        gas_mean_kohms    = gas_mean_kohms,
+        gas_std_kohms     = gas_std_kohms,
+        model_used        = scan.model_used or "rule_based_v1",
+        created_at        = scan.created_at,
     )

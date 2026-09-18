@@ -84,8 +84,13 @@ async def lifespan(app: FastAPI):
 
     # Pre-load AI classifier
     classifier = get_classifier()
-    log.info("AI classifier ready. Model: %s",
-             "ONNX" if classifier._onnx.available else "rule_based")
+    loaded_models = []
+    if classifier._rgb_onnx.available:
+        loaded_models.append("RGB-ONNX")
+    if classifier._uv_onnx.available:
+        loaded_models.append("UV-ONNX")
+    model_mode = "+".join(loaded_models) if loaded_models else "rule_based"
+    log.info("AI classifier ready. Model: %s", model_mode)
 
     # Wire WebSocket manager into scan router
     from routers.scan import set_ws_manager
@@ -149,7 +154,7 @@ def health_check():
     return HealthCheck(
         status       = "ok",
         version      = "1.0.0",
-        model_loaded = classifier._onnx.available,
+        model_loaded = classifier.model_loaded,
         db_ok        = True,
     )
 

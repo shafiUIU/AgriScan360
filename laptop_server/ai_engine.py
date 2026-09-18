@@ -291,6 +291,19 @@ class AIClassifier:
             "loaded" if self._uv_onnx.available  else "rule-based",
         )
 
+    @property
+    def model_loaded(self) -> bool:
+        """True if either the RGB or UV neural model is loaded."""
+        return self._rgb_onnx.available or self._uv_onnx.available
+
+    @property
+    def _onnx(self):
+        """Backward-compatibility property for legacy calls to classifier._onnx.available."""
+        class _LegacyWrapper:
+            def __init__(self, is_avail):
+                self.available = is_avail
+        return _LegacyWrapper(self.model_loaded)
+
     def classify(
         self,
         rgb_images:  List[bytes],   # 8 JPEG bytes (white light, 8 angles)

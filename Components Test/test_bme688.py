@@ -29,38 +29,117 @@ except ImportError:
     sys.exit(1)
 
 
-def initialize_sensor():
-    """Initializes and configures the BME688 sensor over I2C."""
+def scan_i2c_buses():
+    """Scans all active /dev/i2c-* buses for any responding device."""
+    import glob
+    bus_paths = sorted(glob.glob("/dev/i2c-*"))
+    if not bus_paths:
+        print("[!] No /dev/i2c-* interfaces found. Please enable I2C via 'sudo raspi-config' and reboot.")
+        return {}
+
+    found = {}
     try:
-        # BME688 standard I2C addresses are 0x77 (primary) or 0x76 (secondary)
+        from smbus2 import SMBus
+    except ImportError:
+        SMBus = None
+
+    if not SMBus:
+        print("[!] smbus2 not installed. Testing directly with bme680 library.")
+        return {}
+
+    print("\n--- Scanning all available I2C buses on Raspberry Pi 5 ---")
+    for bpath in bus_paths:
         try:
-            sensor = bme680.BME680(bme680.I2C_ADDR_PRIMARY)
-            print("[INFO] BME688 connected at primary address 0x77.")
-        except (RuntimeError, IOError):
-            sensor = bme680.BME680(bme680.I2C_ADDR_SECONDARY)
-            print("[INFO] BME688 connected at secondary address 0x76.")
+            bnum = int(bpath.split("-")[-1])
+            devices = []
+            with SMBus(bnum) as bus:
+                for addr in range(0x03, 0x78):
+                    try:
+                        bus.read_byte(addr)
+                        devices.append(addr)
+                    except Exception:
+                        pass
+            if devices:
+                found[bnum] = devices
+                print(f"  [+] Bus {bnum} ({bpath}): Found device(s) at: {[hex(a) for a in devices]}")
+            else:
+                print(f"  [-] Bus {bnum} ({bpath}): No devices responding")
+        except Exception as err:
+            print(f"  [?] Bus {bpath}: Could not probe ({err})")
+    print("----------------------------------------------------------\n")
+    return found
 
-        # Configure oversampling rates
-        sensor.set_humidity_oversample(bme680.OS_2X)
-        sensor.set_pressure_oversample(bme680.OS_4X)
-        sensor.set_temperature_oversample(bme680.OS_8X)
-        sensor.set_filter(bme680.FILTER_SIZE_3)
 
-        # Configure the gas heater profile (320°C for 150ms for VOC / rotting gas detection)
-        sensor.set_gas_status(bme680.ENABLE_GAS_MEAS)
-        sensor.set_gas_heater_temperature(320)
-        sensor.set_gas_heater_duration(150)
-        sensor.select_gas_heater_profile(0)
+def initialize_sensor():
+    """Initializes and configures the BME688 sensor over I2C with multi-bus probe."""
+    # First, run a quick hardware scan across all buses
+    bus_map = scan_i2c_buses()
 
-        return sensor
+    # Search for standard BME addresses 0x76 or 0x77
+    target_bus = 1
+    target_addr = None
 
-    except Exception as e:
-        print(f"\n[FATAL ERROR] Could not connect to BME688: {e}")
-        print("Check:")
-        print("  1. Are SDA (Pin 3) and SCL (Pin 5) wired correctly?")
-        print("  2. Is I2C enabled in Raspberry Pi? (Run: sudo raspi-config -> Interfaces -> I2C)")
-        print("  3. Run 'i2cdetect -y 1' in terminal to verify device is detected at 0x76 or 0x77.")
+    for bnum, addrs in bus_map.items():
+        if 0x76 in addrs:
+            target_bus = bnum
+            target_addr = 0x76
+            break
+        elif 0x77 in addrs:
+            target_bus = bnum
+            target_addr = 0x77
+            break
+
+    # If not found via scan, try standard address list on bus 1
+    addrs_to_try = [target_addr] if target_addr else [bme680.I2C_ADDR_PRIMARY, bme680.I2C_ADDR_SECONDARY]
+
+    sensor = None
+    last_err = None
+
+    for addr in addrs_to_try:
+        if addr is None:
+            continue
+        try:
+            # Note: bme680 supports passing an i2c_device (e.g. SMBus(target_bus))
+            try:
+                from smbus2 import SMBus
+                i2c_dev = SMBus(target_bus)
+                sensor = bme680.BME680(addr, i2c_device=i2c_dev)
+            except Exception:
+                sensor = bme680.BME680(addr)
+
+            print(f"[INFO] BME688 successfully connected at address 0x{addr:02X} on bus {target_bus}!")
+            break
+        except Exception as e:
+            last_err = e
+            continue
+
+    if sensor is None:
+        print(f"\n[FATAL ERROR] Could not connect to BME688: {last_err}")
+        print("\nPhysical Hardware Diagnosis Checklist:")
+        print("  1. Silk-Screen Pin Order Check:")
+        print("     Read the actual text printed on your sensor board next to each pin.")
+        print("     Make sure SDI (SDA) is Pin 3 and SCK (SCL) is Pin 5.")
+        print("  2. Did you tie CS to 3.3V?")
+        print("     If CS is disconnected, Bosch sensors default to SPI and ignore I2C.")
+        print("  3. Check Power:")
+        print("     Connect 3.3V directly to the '3V' / '3V3' pin (NOT 'vin').")
+        print("  4. Check Ground:")
+        print("     GND must be connected to Pi Pin 9 or Pin 6.")
         sys.exit(1)
+
+    # Configure oversampling rates
+    sensor.set_humidity_oversample(bme680.OS_2X)
+    sensor.set_pressure_oversample(bme680.OS_4X)
+    sensor.set_temperature_oversample(bme680.OS_8X)
+    sensor.set_filter(bme680.FILTER_SIZE_3)
+
+    # Configure the gas heater profile (320°C for 150ms for VOC detection)
+    sensor.set_gas_status(bme680.ENABLE_GAS_MEAS)
+    sensor.set_gas_heater_temperature(320)
+    sensor.set_gas_heater_duration(150)
+    sensor.select_gas_heater_profile(0)
+
+    return sensor
 
 
 def main():

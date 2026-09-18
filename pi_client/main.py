@@ -44,6 +44,7 @@ from gas_sensor import GasSensor, ScanGasResult
 from camera     import CameraController
 from display    import OLEDDisplay
 from uploader   import ScanUploader
+import config as cfg
 from config     import SUPPORTED_PRODUCE, NUM_SCAN_STOPS, CHAMBER_VOLUME_LITERS
 
 

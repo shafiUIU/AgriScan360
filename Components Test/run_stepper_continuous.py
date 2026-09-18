@@ -35,26 +35,33 @@ PIN_DIR    = 27   # GPIO 27 -> A4988 DIR
 PIN_ENABLE = 22   # GPIO 22 -> A4988 ENABLE (Active LOW)
 
 # ==============================================================================
-# SPEED & DIRECTION
+# SPEED & ROTATION CONFIGURATION
 # ==============================================================================
-# TARGET_DELAY: Time in seconds between step pulses
-# 0.0020 = Slow & very smooth (Best for first test)
-# 0.0015 = Medium turntable speed
-# 0.0008 = Fast rotation
-TARGET_DELAY = 0.0015
+# 200 steps/rev at full-step (1.8° per step): 25 steps = exactly 45°
+STEPS_PER_45_DEG = 25       # Steps per 45° rotation (Full-step mode)
+STEP_PULSE_DELAY = 0.004    # Seconds between steps during movement (smooth, no slip)
+PAUSE_SEC        = 3.0      # Pause duration at each 45° stop (seconds)
+DIRECTION        = 1        # 1 = Clockwise, 0 = Counter-Clockwise
 
-# Direction: 1 = Clockwise, 0 = Counter-Clockwise
-DIRECTION = 1
+
+def step_45_degrees(step_pin, steps=STEPS_PER_45_DEG, delay=STEP_PULSE_DELAY):
+    """Executes exactly 45 degrees rotation (25 steps)."""
+    for _ in range(steps):
+        step_pin.on()
+        time.sleep(delay)
+        step_pin.off()
+        time.sleep(delay)
 
 
 def main():
     print("==================================================")
-    print("  AgriScan 360 - Continuous Stepper Test")
+    print("  AgriScan 360 - 45° Stepper Turntable Test")
     print("  Motor: 4S42Q-P0404S  |  Driver: A4988")
     print("==================================================")
-    print(f"  Target Delay : {TARGET_DELAY}s")
-    print(f"  Direction    : {'Clockwise' if DIRECTION == 1 else 'Counter-Clockwise'}")
-    print("  Status       : Press [Ctrl + C] anytime to STOP safely.")
+    print(f"  Rotation : 45° ({STEPS_PER_45_DEG} steps)")
+    print(f"  Interval : Every {PAUSE_SEC} seconds")
+    print(f"  Direction: {'Clockwise' if DIRECTION == 1 else 'Counter-Clockwise'}")
+    print("  Status   : Press [Ctrl + C] anytime to STOP safely.")
     print("==================================================\n")
 
     # Initialize pins with native Raspberry Pi 5 gpiozero library
@@ -70,34 +77,27 @@ def main():
         time.sleep(0.01)
 
         # 2. Energize motor coils (pull ENABLE pin to LOW / 0V)
-        print("[1/2] Energizing motor coils...")
+        print("[>] Energizing motor coils...")
         enable_pin.off()
         time.sleep(0.1)
 
-        # 3. Soft Ramp-up (prevents motor stalling/buzzing on start)
-        print("[2/2] Ramping up speed smoothly...")
-        current_delay = 0.006  # Start gentle
-        while current_delay > TARGET_DELAY:
-            step_pin.on()
-            time.sleep(current_delay)
-            step_pin.off()
-            time.sleep(current_delay)
-            current_delay *= 0.96  # Accelerate smoothly
+        total_stops = 0
+        current_angle = 0
 
-        print("\n>>> MOTOR RUNNING CONTINUOUSLY <<<")
+        print(f"\n>>> STARTING 45° ROTATION EVERY {PAUSE_SEC} SECONDS <<<")
         print("Press Ctrl+C to stop.\n")
 
-        # 4. Continuous steady-speed loop
-        step_count = 0
         while True:
-            step_pin.on()
-            time.sleep(TARGET_DELAY)
-            step_pin.off()
-            time.sleep(TARGET_DELAY)
-            
-            step_count += 1
-            if step_count % 1000 == 0:
-                print(f"  -> Spinning steadily... ({step_count} steps)", end="\r")
+            total_stops += 1
+            current_angle = (current_angle + 45) % 360
+            stop_in_revolution = ((total_stops - 1) % 8) + 1
+
+            print(f"[{time.strftime('%H:%M:%S')}] Rotating 45° -> Stop #{stop_in_revolution}/8 (Total: {current_angle}°)...", end="", flush=True)
+            step_45_degrees(step_pin)
+            print(" Done! Settling.")
+
+            print(f"    Waiting {PAUSE_SEC}s before next move...")
+            time.sleep(PAUSE_SEC)
 
     except KeyboardInterrupt:
         print("\n\n[HALT] Ctrl+C pressed by user! Stopping motor...")
@@ -106,7 +106,7 @@ def main():
         print(f"\n[ERROR] An error occurred: {e}")
 
     finally:
-        # 5. Disable motor coils so the 0.4A motor stays completely cool!
+        # Disable motor coils so the motor stays cool
         enable_pin.on()
         print("[SAFE] Motor coils de-energized. Safe to power off.")
 

@@ -48,6 +48,7 @@ log = logging.getLogger("agriscan.main")
 
 parser = argparse.ArgumentParser(description="AgriScan 360 -- Adaptive Master Orchestrator")
 parser.add_argument("--simulate",    action="store_true", help="Run without hardware (PC test mode)")
+parser.add_argument("--produce",     type=str, default=None, help="Force produce name (Tomato, Apple, Eggplant)")
 parser.add_argument("--manual-leds", action="store_true", help="Force manual operator LED switching")
 parser.add_argument("--mosfet",      action="store_true", help="Force automatic MOSFET GPIO LED switching")
 parser.add_argument("--no-loop",     action="store_true", help="Run single scan then exit")
@@ -184,6 +185,9 @@ def detect_produce(camera: "CameraController", lights: "LightController"):
 
     Returns (produce_name: str | None, confidence_pct: int)
     """
+    if args.produce:
+        return args.produce.strip().title(), 99
+
     if not PIL_AVAILABLE:
         log.warning("Pillow not installed — produce auto-detection skipped.")
         return None, 0
@@ -206,8 +210,12 @@ def detect_produce(camera: "CameraController", lights: "LightController"):
         img_bytes = camera.capture_jpeg()
         print("    [Detection snapshot taken — you may turn off the White LED now]")
     else:
-        # Simulate mode — use empty bytes, will return None
-        img_bytes = b""
+        # Simulate mode — capture test image
+        img_bytes = camera.capture_jpeg()
+        detected, conf = _classify_image_bytes(img_bytes)
+        if detected is None:
+            return "Tomato", 95
+        return detected, conf
 
     return _classify_image_bytes(img_bytes)
 
@@ -253,11 +261,44 @@ def run_scan(motor:   "StepperMotor",
         print(f"    -> Clean-air baseline: {gas._baseline.gas_kohms:.2f} kOhm  "
               f"| {gas._baseline.temperature:.1f}C  "
               f"| {gas._baseline.humidity:.1f}%RH")
+
+        # Automatically log empty closed box reading for baseline training
+        try:
+            empty_res = ScanGasResult(
+                baseline_kohms=gas._baseline.gas_kohms,
+                post_scan_kohms=gas._baseline.gas_kohms,
+                delta_kohms=0.0,
+                gas_min_kohms=gas._baseline.gas_kohms,
+                gas_max_kohms=gas._baseline.gas_kohms,
+                gas_mean_kohms=gas._baseline.gas_kohms,
+                gas_std_kohms=0.0,
+                gas_ratio_pct=0.0,
+                gas_slope_per_sec=0.0,
+                temperature_c=gas._baseline.temperature,
+                humidity_pct=gas._baseline.humidity,
+                pressure_hpa=gas._baseline.pressure,
+                sample_count=1,
+                rot_suspicion="EMPTY_BOX",
+                installed=True,
+            )
+            gas.log_scan_dataset(
+                scan_id=f"BASE_{int(time.time())}",
+                fruit_type="empty_box",
+                condition="EMPTY_BOX",
+                predicted_condition="EMPTY_BOX",
+                gas_result=empty_res,
+            )
+        except Exception as exc:
+            log.warning("Could not log empty box baseline: %s", exc)
     else:
         print("\n[>] BME688 not installed — skipping gas baseline calibration.")
 
     # ── Step B: Place produce, auto-detect ───────────────────────────────────
     produce_name = None
+    if args.produce:
+        produce_name = args.produce.strip().title()
+        print(f"\n[>] Produce forced via argument: {produce_name}")
+
     while produce_name is None:
         print(f"\n[>] STEP B: Place the produce on the turntable.")
         print("[>] Close the box lid tightly.")
@@ -274,7 +315,19 @@ def run_scan(motor:   "StepperMotor",
             print("\n[!] CANNOT IDENTIFY PRODUCE.")
             print("[!] Supported items: Tomato, Apple, Eggplant")
             print("[!] Make sure the produce is centred on the turntable and visible.")
-            print("[!] Remove the item and try again.\n")
+            print("    1. Try scanning/detecting again")
+            print("    2. Select produce manually")
+            try:
+                choice = input("Select [1/2] (Default 1 = Try again): ").strip()
+            except EOFError:
+                choice = "1"
+            if choice == "2":
+                print("\nSelect Produce:")
+                print("  1. Tomato\n  2. Apple\n  3. Eggplant")
+                sel = input("Enter number [1-3]: ").strip()
+                mapping = {"1": "Tomato", "2": "Apple", "3": "Eggplant"}
+                produce_name = mapping.get(sel, "Tomato")
+                break
             continue  # Loop back to Step B
 
         if confidence >= 70:
@@ -372,20 +425,81 @@ def run_scan(motor:   "StepperMotor",
     gas_delta  = result.get("gas_delta",  gas_result.delta_kohms)
     scan_id    = result.get("scan_id",    "SCAN_0000")
 
-    # Record to dataset CSV for future ML model training
-    if gas.installed:
-        gas.log_scan_dataset(scan_id=scan_id, fruit_type=produce_name,
-                             condition=status, gas_result=gas_result)
-
     if status == "SERVER_OFFLINE":
         display.show_server_offline()
+        # In offline mode, use gas rot_suspicion as the assumption
+        if gas.installed and gas_result.rot_suspicion not in ("NOT_INSTALLED", "UNKNOWN"):
+            status = gas_result.rot_suspicion
     else:
         display.show_result(status=status, confidence=confidence, gas_delta=gas_delta)
 
     _print_result(produce_name, status, confidence, gas_delta, gas_result)
-    log.info("=== Scan result: %s | %.1f%% confidence | Gas delta: %.2f kOhm ===",
+    log.info("=== System Assumption: %s (%.1f%%) | Gas Delta: %.2f kOhm ===",
              status, confidence, gas_delta)
+
+    # ── Step E: Ground-Truth Verification & Feedback Loop ─────────────────────
+    # "You assume, I correct" — Operator verifies or corrects the AI's judgment
+    actual_condition = prompt_ground_truth_correction(assumed_status=status)
+
+    # Record to dataset CSV for ML training (records both ground truth and prediction)
+    if gas.installed:
+        gas.log_scan_dataset(
+            scan_id=scan_id,
+            fruit_type=produce_name,
+            condition=actual_condition,
+            predicted_condition=status,
+            gas_result=gas_result,
+        )
+
+    # Sync ground-truth label to laptop server database
+    if scan_id and scan_id != "SCAN_0000":
+        uploader.send_ground_truth(scan_id=scan_id, ground_truth=actual_condition)
+
     return result
+
+
+def prompt_ground_truth_correction(assumed_status: str) -> str:
+    """
+    Operator Ground-Truth Feedback Loop:
+    The AI system assumes a condition ('FRESH', 'MID_FRESH', 'MID_ROTTEN', 'ROTTEN').
+    The operator inspects the produce and either confirms or corrects the assumption.
+    This ground-truth label is recorded for training the user's personal models.
+    """
+    options = ["FRESH", "MID_FRESH", "MID_ROTTEN", "ROTTEN"]
+    clean_assumed = assumed_status.upper().strip()
+    if clean_assumed not in options:
+        clean_assumed = "FRESH"
+
+    print("\n" + "-" * 62)
+    print("  [GROUND TRUTH VERIFICATION & DATASET LABELING]")
+    print(f"  System Assumption: [{clean_assumed}]")
+    print("  Press [Enter] if correct, or 'c' to correct: ", end="", flush=True)
+    try:
+        choice = input().strip().lower()
+    except EOFError:
+        choice = ""
+
+    if choice in ("", "y", "yes"):
+        print(f"  -> Confirmed Ground Truth: [{clean_assumed}]")
+        return clean_assumed
+
+    # Operator wants to correct the label
+    print("\n  Select ACTUAL produce condition for training:")
+    for idx, opt in enumerate(options, 1):
+        print(f"    {idx}. {opt}")
+    while True:
+        try:
+            sel = input("  Enter number [1-4] (or press Enter to keep assumption): ").strip()
+            if sel == "":
+                return clean_assumed
+            val = int(sel)
+            if 1 <= val <= len(options):
+                corrected = options[val - 1]
+                print(f"  -> Corrected Ground Truth: [{corrected}] (Overrode assumption: {clean_assumed})")
+                return corrected
+        except (ValueError, KeyboardInterrupt):
+            pass
+        print("  Invalid selection. Please enter 1, 2, 3, or 4.")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

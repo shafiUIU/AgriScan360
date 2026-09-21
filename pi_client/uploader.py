@@ -130,5 +130,20 @@ class ScanUploader:
             log.error("Unexpected upload error: %s", exc)
             return {**_OFFLINE_RESULT, "reason": f"Unexpected error: {exc}"}
 
+    def send_ground_truth(self, scan_id: int, ground_truth: str) -> bool:
+        """
+        Send human-verified ground-truth label to server to update database record.
+        """
+        if not scan_id:
+            return False
+        from config import LAPTOP_SERVER_URL
+        endpoint = f"{LAPTOP_SERVER_URL}/api/scan/{scan_id}/ground-truth"
+        try:
+            resp = self._session.post(endpoint, data={"ground_truth": ground_truth}, timeout=5)
+            return resp.status_code == 200
+        except Exception as exc:
+            log.warning("Could not sync ground truth to server: %s", exc)
+            return False
+
     def close(self):
         self._session.close()

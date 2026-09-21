@@ -30,7 +30,8 @@ class Scan(Base):
 
     # Classification result
     status          = Column(String(16),  nullable=False, default="PENDING")
-    # status ∈ {"HEALTHY", "ROTTEN", "UNCERTAIN", "PENDING", "ERROR"}
+    # status ∈ {"FRESH", "MID_FRESH", "MID_ROTTEN", "ROTTEN", "HEALTHY", "UNCERTAIN", "PENDING", "ERROR"}
+    ground_truth    = Column(String(32),  nullable=True)                  # Human verified condition
     confidence      = Column(Float,       nullable=False, default=0.0)   # 0.0–100.0
     reason          = Column(Text,        nullable=True)                  # Human-readable explanation
 

@@ -261,6 +261,31 @@ class ONNXClassifier:
 # Multi-Modal Fusion Classifier (main entry point)
 # =============================================================================
 
+# ── Per-Produce Gas Freshness Profiles (Server-Side) ─────────────────────────
+PRODUCE_GAS_PROFILES = {
+    "Tomato": {
+        "FRESH":      (8.0,  3.0),
+        "MID_FRESH":  (15.0, 5.5),
+        "MID_ROTTEN": (25.0, 9.0),
+    },
+    "Apple": {
+        "FRESH":      (10.0, 4.0),
+        "MID_FRESH":  (18.0, 7.0),
+        "MID_ROTTEN": (28.0, 11.0),
+    },
+    "Eggplant": {
+        "FRESH":      (6.0,  2.5),
+        "MID_FRESH":  (12.0, 4.5),
+        "MID_ROTTEN": (20.0, 7.5),
+    },
+    "default": {
+        "FRESH":      (8.0,  3.5),
+        "MID_FRESH":  (16.0, 6.0),
+        "MID_ROTTEN": (24.0, 9.5),
+    },
+}
+
+
 class AIClassifier:
     """
     The main classifier. Fuses three sensor pillars:
@@ -272,7 +297,7 @@ class AIClassifier:
     Pillar 3 (gas) always uses the rule-based approach (own dataset needed).
     """
 
-    CLASS_LABELS = ["HEALTHY", "ROTTEN", "UNCERTAIN"]
+    CLASS_LABELS = ["FRESH", "MID_FRESH", "MID_ROTTEN", "ROTTEN"]
 
     def __init__(self):
         # Load RGB model (Pillar 1) and UV model (Pillar 2) separately
@@ -309,9 +334,10 @@ class AIClassifier:
         rgb_images:  List[bytes],   # 8 JPEG bytes (white light, 8 angles)
         uv_images:   List[bytes],   # 8 JPEG bytes (UV light, 8 angles)
         gas_delta:   float,         # kOhm drop from BME688
-        rot_suspicion: str,         # HEALTHY / EARLY_ROT / SEVERE_ROT / LOW / MEDIUM / HIGH
+        rot_suspicion: str,         # FRESH / MID_FRESH / MID_ROTTEN / ROTTEN
         gas_ratio_pct: float = 0.0, # relative percentage drop (scale-invariant)
         gas_slope_per_sec: float = 0.0, # rate of change dR/dt (kOhm/s)
+        produce_name: str = "default",
     ) -> dict:
         """
         Full multi-modal classification.
@@ -321,18 +347,18 @@ class AIClassifier:
 
         # Choose mode based on which models are available
         if self._rgb_onnx.available or self._uv_onnx.available:
-            result = self._neural_classify(rgb_images, uv_images, gas_delta, rot_suspicion, gas_ratio_pct, gas_slope_per_sec)
+            result = self._neural_classify(rgb_images, uv_images, gas_delta, rot_suspicion, gas_ratio_pct, gas_slope_per_sec, produce_name)
         else:
-            result = self._rule_classify(rgb_images, uv_images, gas_delta, rot_suspicion, gas_ratio_pct, gas_slope_per_sec)
+            result = self._rule_classify(rgb_images, uv_images, gas_delta, rot_suspicion, gas_ratio_pct, gas_slope_per_sec, produce_name)
 
         result["inference_ms"] = round((time.time() - start) * 1000, 1)
-        log.info("Classification complete: %s (%.1f%%) in %.0fms",
-                 result["status"], result["confidence"], result["inference_ms"])
+        log.info("Classification complete [%s]: %s (%.1f%%) in %.0fms",
+                 produce_name, result["status"], result["confidence"], result["inference_ms"])
         return result
 
     # ── Rule-Based Classifier ─────────────────────────────────────────────────
 
-    def _rule_classify(self, rgb_images, uv_images, gas_delta, rot_suspicion, gas_ratio_pct=0.0, gas_slope_per_sec=0.0) -> dict:
+    def _rule_classify(self, rgb_images, uv_images, gas_delta, rot_suspicion, gas_ratio_pct=0.0, gas_slope_per_sec=0.0, produce_name="default") -> dict:
         """
         Heuristic multi-pillar fusion without a trained model.
         Active until you download datasets and train the ONNX model.
@@ -345,30 +371,42 @@ class AIClassifier:
         # Pillar scores (0-1, higher = more rotten)
         p1_score = agg["rgb_rot_score"]            # RGB surface rot
         p2_score = agg["uv_fluorescence_score"]    # UV fluorescence
-        p3_score = self._gas_score(gas_delta, gas_ratio_pct, gas_slope_per_sec)  # Enhanced Gas VOC
+        p3_score = self._gas_score(gas_delta, gas_ratio_pct, gas_slope_per_sec, produce_name)  # Enhanced Gas VOC
 
         # Weighted fusion
         fused = p1_score * 0.40 + p2_score * 0.35 + p3_score * 0.25
         confidence_rotten  = fused * 100.0
         confidence_healthy = (1.0 - fused) * 100.0
 
-        # Decision
-        if fused >= 0.55:
+        # 4-tier decision matching per-produce gas analytics
+        if fused >= 0.60:
             status     = "ROTTEN"
             confidence = confidence_rotten
-        elif fused <= 0.30:
-            status     = "HEALTHY"
+        elif fused >= 0.40:
+            status     = "MID_ROTTEN"
+            confidence = confidence_rotten
+        elif fused >= 0.18:
+            status     = "MID_FRESH"
             confidence = confidence_healthy
         else:
-            status     = "UNCERTAIN"
-            confidence = 100.0 - abs(confidence_rotten - 50.0) * 2
+            status     = "FRESH"
+            confidence = confidence_healthy
 
         # Clamp confidence
         confidence = round(min(99.9, max(50.1, confidence)), 1)
 
-        # Human-readable reason
-        reason = self._build_reason(status, p1_score, p2_score, p3_score,
-                                    agg, gas_delta, rot_suspicion)
+        # Gas override: strong VOC signal overrules FRESH/MID_FRESH
+        if p3_score > 0.7 and status in ("FRESH", "MID_FRESH"):
+            status     = "MID_ROTTEN"
+            confidence = min(confidence, 70.0)
+            reason = (
+                f"Vision heuristic estimated {status} (RGB: {p1_score:.2f}, UV: {p2_score:.2f}) "
+                f"but gas sensor detected elevated VOC levels ({rot_suspicion}, DeltaGas={gas_delta:.1f} kOhm, "
+                f"Drop={gas_ratio_pct:.1f}%, Slope={gas_slope_per_sec:+.4f}). Status adjusted to MID_ROTTEN."
+            )
+        else:
+            reason = self._build_reason(status, p1_score, p2_score, p3_score,
+                                        agg, gas_delta, rot_suspicion)
 
         return {
             "status":      status,
@@ -384,7 +422,7 @@ class AIClassifier:
             "agg_features": agg,
         }
 
-    def _neural_classify(self, rgb_images, uv_images, gas_delta, rot_suspicion, gas_ratio_pct=0.0, gas_slope_per_sec=0.0) -> dict:
+    def _neural_classify(self, rgb_images, uv_images, gas_delta, rot_suspicion, gas_ratio_pct=0.0, gas_slope_per_sec=0.0, produce_name="default") -> dict:
         """
         Dual-model ONNX classification (Pillar 1 = RGB model, Pillar 2 = UV model).
 
@@ -445,7 +483,7 @@ class AIClassifier:
             p2_source = "uv_rule_based"
 
         # ── Pillar 3: BME688 gas — enhanced multi-feature analytics ───────────
-        p3_score = self._gas_score(gas_delta, gas_ratio_pct, gas_slope_per_sec)
+        p3_score = self._gas_score(gas_delta, gas_ratio_pct, gas_slope_per_sec, produce_name)
 
         # ── Weighted fusion ───────────────────────────────────────────────────
         fused = p1_score * 0.40 + p2_score * 0.35 + p3_score * 0.25
@@ -506,33 +544,34 @@ class AIClassifier:
     # ── Helpers ───────────────────────────────────────────────────────────────
 
     @staticmethod
-    def _gas_score(gas_delta: float, gas_ratio_pct: float = 0.0, gas_slope_per_sec: float = 0.0) -> float:
+    def _gas_score(gas_delta: float, gas_ratio_pct: float = 0.0, gas_slope_per_sec: float = 0.0, produce_name: str = "default") -> float:
         """
         Convert gas analytics (delta, percentage drop, slope) to 0–1 rot probability score.
-        Significantly more accurate than delta alone:
-          1. gas_ratio_pct provides scale-invariance across room baseline differences.
-          2. gas_slope_per_sec distinguishes active VOC degassing from static baseline shifts.
+        Uses PRODUCE_GAS_PROFILES for produce-specific thresholds (Tomato, Apple, Eggplant).
         """
+        profile = PRODUCE_GAS_PROFILES.get((produce_name or "").title(), PRODUCE_GAS_PROFILES["default"])
+        fresh_r, fresh_d = profile["FRESH"]
+        midf_r,  midf_d  = profile["MID_FRESH"]
+        midr_r,  midr_d  = profile["MID_ROTTEN"]
+
         if gas_ratio_pct > 0:
-            if gas_ratio_pct >= 22.0:
+            if gas_ratio_pct >= midr_r:
                 base_score = 0.95
-            elif gas_ratio_pct >= 15.0:
-                base_score = 0.80
-            elif gas_ratio_pct >= 9.0:
-                base_score = 0.50
-            elif gas_ratio_pct >= 5.0:
-                base_score = 0.25
+            elif gas_ratio_pct >= midf_r:
+                base_score = 0.65
+            elif gas_ratio_pct >= fresh_r:
+                base_score = 0.30
             else:
                 base_score = 0.05
         else:
-            if gas_delta >= ROTTEN_GAS_DELTA_HIGH:
-                base_score = min(1.0, gas_delta / 10.0)
-            elif gas_delta >= ROTTEN_GAS_DELTA_MED:
-                base_score = 0.40
-            elif gas_delta > 0:
-                base_score = 0.10
+            if gas_delta >= midr_d:
+                base_score = 0.95
+            elif gas_delta >= midf_d:
+                base_score = 0.65
+            elif gas_delta >= fresh_d:
+                base_score = 0.30
             else:
-                base_score = 0.0
+                base_score = 0.05
 
         # Rate of change modifier: steep negative slope confirms active fruit decomposition
         if gas_slope_per_sec < -0.15:

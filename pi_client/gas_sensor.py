@@ -429,9 +429,11 @@ class GasSensor:
         )
 
     @staticmethod
-    def log_scan_dataset(scan_id: str, fruit_type: str, condition: str, gas_result: ScanGasResult, csv_path: str = None):
+    def log_scan_dataset(scan_id: str, fruit_type: str, condition: str, gas_result: ScanGasResult,
+                         predicted_condition: str = None, csv_path: str = None):
         """
-        Appends complete 16-feature sensor snapshot to CSV for ML model building.
+        Appends complete 17-feature sensor snapshot to CSV for ML model building.
+        Records both ground-truth 'condition' and AI 'predicted_condition'.
         Creates file automatically if not present.
         """
         import os, csv
@@ -443,7 +445,7 @@ class GasSensor:
         file_exists = os.path.exists(csv_path)
 
         fields = [
-            "scan_id", "fruit_type", "condition", "timestamp",
+            "scan_id", "fruit_type", "condition", "predicted_condition", "timestamp",
             "temperature_c", "humidity_pct", "pressure_hpa",
             "baseline_gas_kohms", "post_scan_gas_kohms", "delta_gas_kohms",
             "gas_min_kohms", "gas_max_kohms", "gas_mean_kohms", "gas_std_kohms",
@@ -451,10 +453,21 @@ class GasSensor:
             "rgb_image_count", "uv_image_count", "rot_suspicion"
         ]
 
+        # Check existing header if file exists
+        existing_has_pred = False
+        if file_exists and os.path.getsize(csv_path) > 0:
+            try:
+                with open(csv_path, "r", encoding="utf-8") as f:
+                    first_line = f.readline()
+                    existing_has_pred = "predicted_condition" in first_line
+            except Exception:
+                pass
+
         row = {
             "scan_id": str(scan_id),
             "fruit_type": str(fruit_type).lower(),
-            "condition": str(condition).lower(),
+            "condition": str(condition).upper(),
+            "predicted_condition": str(predicted_condition or condition).upper(),
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
             "temperature_c": gas_result.temperature_c,
             "humidity_pct": gas_result.humidity_pct,
@@ -475,11 +488,13 @@ class GasSensor:
         }
 
         try:
+            active_fields = fields if (not file_exists or existing_has_pred) else [f for f in fields if f != "predicted_condition"]
             with open(csv_path, "a", newline="", encoding="utf-8") as f:
-                writer = csv.DictWriter(f, fieldnames=fields)
-                if not file_exists:
+                writer = csv.DictWriter(f, fieldnames=active_fields, extrasaction="ignore")
+                if not file_exists or os.path.getsize(csv_path) == 0:
                     writer.writeheader()
                 writer.writerow(row)
-            log.info("Saved scan gas telemetry row to %s", csv_path)
+            log.info("Saved scan gas telemetry row to %s (ground_truth=%s, predicted=%s)",
+                     csv_path, row["condition"], row["predicted_condition"])
         except Exception as exc:
             log.error("Failed to log scan dataset row: %s", exc)

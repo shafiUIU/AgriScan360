@@ -146,6 +146,7 @@ async def ingest_scan(
             rot_suspicion     = rot_suspicion,
             gas_ratio_pct     = gas_ratio_pct,
             gas_slope_per_sec = gas_slope_per_sec,
+            produce_name      = scan.produce_name,
         )
     except Exception as exc:
         log.error("AI classification error: %s", exc)
@@ -202,3 +203,24 @@ async def ingest_scan(
         model_used        = scan.model_used or "rule_based_v1",
         created_at        = scan.created_at,
     )
+
+
+@router.post("/scan/{scan_id}/ground-truth")
+def set_ground_truth(
+    scan_id: int,
+    ground_truth: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    """
+    Update scan record with human-verified ground truth label.
+    Used for feedback learning and retraining.
+    """
+    scan = db.query(Scan).filter(Scan.id == scan_id).first()
+    if not scan:
+        raise HTTPException(status_code=404, detail="Scan not found")
+
+    scan.ground_truth = ground_truth.strip().upper()
+    db.commit()
+    log.info("Scan %d ground truth set to %s (predicted: %s)",
+             scan_id, scan.ground_truth, scan.status)
+    return {"scan_id": scan_id, "ground_truth": scan.ground_truth, "status": "updated"}

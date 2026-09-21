@@ -23,7 +23,8 @@ try:
 except ImportError:
     GPIOZERO_AVAILABLE = False
 
-from config import PIN_LED_WHITE, PIN_LED_UV, WHITE_WARMUP_SEC, UV_WARMUP_SEC
+from config import (PIN_LED_WHITE, PIN_LED_UV, WHITE_WARMUP_SEC, UV_WARMUP_SEC,
+                    MOSFET_WHITE_HOLD_SEC, MOSFET_UV_HOLD_SEC)
 
 
 class LightController:
@@ -75,7 +76,8 @@ class LightController:
                 self._uv_dev.off()
             time.sleep(0.05)
             self._white_dev.on()
-            time.sleep(WHITE_WARMUP_SEC)
+            log.info("  [MOSFET] White LED ON — holding %.1fs before snap...", MOSFET_WHITE_HOLD_SEC)
+            time.sleep(MOSFET_WHITE_HOLD_SEC)   # 5-second hold: stabilise + expose
         elif self.mode == "manual":
             print(f"\n[>] [Stop {stop_index + 1}/8 ({angle}°)] Turn ON White LED switch.")
             print(f"    Press [Enter] when ready to capture RGB...", end="", flush=True)
@@ -83,6 +85,7 @@ class LightController:
                 input()
             except EOFError:
                 pass
+            time.sleep(WHITE_WARMUP_SEC)
             self._manual_active_light = "white"
         else:
             time.sleep(0.05)
@@ -105,7 +108,8 @@ class LightController:
                 self._white_dev.off()
             time.sleep(0.05)
             self._uv_dev.on()
-            time.sleep(UV_WARMUP_SEC)
+            log.info("  [MOSFET] UV-A LED ON — holding %.1fs before snap...", MOSFET_UV_HOLD_SEC)
+            time.sleep(MOSFET_UV_HOLD_SEC)      # 5-second hold: stabilise + expose
         elif self.mode == "manual":
             print(f"\n[>] [Stop {stop_index + 1}/8 ({angle}°)] Turn OFF White LED, Turn ON 365nm UV-A LED switch.")
             print(f"    Press [Enter] when ready to capture UV...", end="", flush=True)
@@ -113,6 +117,7 @@ class LightController:
                 input()
             except EOFError:
                 pass
+            time.sleep(UV_WARMUP_SEC)
             self._manual_active_light = "uv"
         else:
             time.sleep(0.05)

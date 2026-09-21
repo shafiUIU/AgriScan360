@@ -43,8 +43,10 @@ SETTLE_DELAY       = 1.5     # seconds to let turntable settle before capture
 # ── Camera Settings ────────────────────────────────────────────────────────────
 CAPTURE_RESOLUTION = (1920, 1080)   # Full HD capture
 JPEG_QUALITY       = 100             # JPEG quality 0-100
-WHITE_WARMUP_SEC   = 0.3            # time to let White LEDs warm up before capture
-UV_WARMUP_SEC      = 0.5            # time to let UV LEDs warm up before capture
+WHITE_WARMUP_SEC   = 0.3            # time to let White LEDs warm up before capture (manual mode)
+UV_WARMUP_SEC      = 0.5            # time to let UV LEDs warm up before capture (manual mode)
+MOSFET_WHITE_HOLD_SEC = 5.0         # White LED ON hold time in MOSFET auto mode (seconds before snap)
+MOSFET_UV_HOLD_SEC    = 5.0         # UV-A LED ON hold time in MOSFET auto mode (seconds before snap)
 
 # ── Gas Sensor & Chamber Settings ─────────────────────────────────────────────
 CHAMBER_VOLUME_LITERS    = 27.0  # 27L closed container volume

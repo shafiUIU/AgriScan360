@@ -396,7 +396,21 @@ class AIClassifier:
         """
         import numpy as np
 
-        LABEL_ROT_SCORE = {"HEALTHY": 0.0, "UNCERTAIN": 0.5, "ROTTEN": 1.0, "UNKNOWN": 0.5}
+        LABEL_ROT_SCORE = {
+            # Legacy 3-tier (kept for backward compatibility)
+            "HEALTHY":      0.0,
+            "EARLY_ROT":    0.55,
+            "SEVERE_ROT":   0.95,
+            # New 4-tier per-produce labels
+            "FRESH":        0.0,
+            "MID_FRESH":    0.20,
+            "MID_ROTTEN":   0.65,
+            "ROTTEN":       0.95,
+            # Generic fallbacks
+            "UNCERTAIN":    0.5,
+            "UNKNOWN":      0.5,
+            "NOT_INSTALLED": 0.0,
+        }
 
         # ── Pillar 1: RGB model ───────────────────────────────────────────────
         if self._rgb_onnx.available and rgb_images:
@@ -439,27 +453,32 @@ class AIClassifier:
         confidence_rotten  = fused * 100.0
         confidence_healthy = (1.0 - fused) * 100.0
 
-        if fused >= 0.55:
+        # 4-tier status mapping from fused score
+        if fused >= 0.60:
             status     = "ROTTEN"
             confidence = confidence_rotten
-        elif fused <= 0.30:
-            status     = "HEALTHY"
+        elif fused >= 0.40:
+            status     = "MID_ROTTEN"
+            confidence = confidence_rotten
+        elif fused >= 0.18:
+            status     = "MID_FRESH"
             confidence = confidence_healthy
         else:
-            status     = "UNCERTAIN"
-            confidence = 100.0 - abs(confidence_rotten - 50.0) * 2
+            status     = "FRESH"
+            confidence = confidence_healthy
 
         confidence = round(min(99.9, max(50.1, confidence)), 1)
 
-        # Gas override: strong VOC signal overrules a HEALTHY neural decision
-        if p3_score > 0.7 and status == "HEALTHY":
-            status     = "UNCERTAIN"
+        # Gas override: strong VOC signal overrules a FRESH/MID_FRESH neural decision
+        if p3_score > 0.7 and status in ("FRESH", "MID_FRESH"):
+            status     = "MID_ROTTEN"
             confidence = min(confidence, 70.0)
             reason = (
-                f"Neural models voted HEALTHY (RGB: {p1_score:.2f}, UV: {p2_score:.2f}) "
+                f"Neural models voted {status} (RGB: {p1_score:.2f}, UV: {p2_score:.2f}) "
                 f"but gas sensor detected strong VOC signal "
-                f"(DeltaGas={gas_delta:.1f} kOhm, Drop={gas_ratio_pct:.1f}%, Slope={gas_slope_per_sec:+.4f}, {rot_suspicion}). "
-                f"Result degraded to UNCERTAIN."
+                f"(DeltaGas={gas_delta:.1f} kOhm, Drop={gas_ratio_pct:.1f}%, "
+                f"Slope={gas_slope_per_sec:+.4f}, {rot_suspicion}). "
+                f"Result upgraded to MID_ROTTEN."
             )
         else:
             reason = (

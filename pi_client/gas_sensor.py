@@ -36,6 +36,75 @@ from config import (
     CHAMBER_VOLUME_LITERS
 )
 
+# ── Per-Produce Gas Freshness Profiles ────────────────────────────────────────
+# Each produce has its own VOC resistance drop thresholds calibrated to its
+# natural decay chemistry inside the 27L sealed chamber.
+# Thresholds are: (ratio_pct, delta_kohms) — whichever is breached first wins.
+#   FRESH      : ratio < fresh_r   AND delta < fresh_d
+#   MID_FRESH  : ratio < midf_r    AND delta < midf_d
+#   MID_ROTTEN : ratio < midr_r    AND delta < midr_d
+#   ROTTEN     : ratio >= midr_r   OR  delta >= midr_d
+PRODUCE_GAS_PROFILES = {
+    # Tomatoes release VOCs (hexanal, ethanol) quickly once overripe.
+    "Tomato": {
+        "FRESH":      (8.0,  3.0),
+        "MID_FRESH":  (15.0, 5.5),
+        "MID_ROTTEN": (25.0, 9.0),
+    },
+    # Apples emit ethylene-related VOCs; slightly higher baseline acceptable.
+    "Apple": {
+        "FRESH":      (10.0, 4.0),
+        "MID_FRESH":  (18.0, 7.0),
+        "MID_ROTTEN": (28.0, 11.0),
+    },
+    # Eggplant decays more subtly — lower thresholds catch early rot faster.
+    "Eggplant": {
+        "FRESH":      (6.0,  2.5),
+        "MID_FRESH":  (12.0, 4.5),
+        "MID_ROTTEN": (20.0, 7.5),
+    },
+    # Generic fallback for any unsupported produce
+    "default": {
+        "FRESH":      (8.0,  3.5),
+        "MID_FRESH":  (16.0, 6.0),
+        "MID_ROTTEN": (24.0, 9.5),
+    },
+}
+
+
+def classify_gas_freshness(produce_name: str, gas_ratio_pct: float,
+                            delta_kohms: float, gas_slope_per_sec: float = 0.0) -> str:
+    """
+    Classify freshness of a scanned produce using per-produce VOC gas profiles.
+
+    Returns one of: "FRESH", "MID_FRESH", "MID_ROTTEN", "ROTTEN"
+    Falls back to 'default' profile if produce_name not in PRODUCE_GAS_PROFILES.
+    """
+    profile = PRODUCE_GAS_PROFILES.get(produce_name.title(),
+                                        PRODUCE_GAS_PROFILES["default"])
+    fresh_r,    fresh_d    = profile["FRESH"]
+    midf_r,     midf_d     = profile["MID_FRESH"]
+    midr_r,     midr_d     = profile["MID_ROTTEN"]
+
+    # Slope modifier: steep negative confirms active decomposition → upgrade severity
+    slope_boost = 0.0
+    if gas_slope_per_sec < -0.15:
+        slope_boost = 8.0   # equivalent extra ratio points
+    elif gas_slope_per_sec < -0.05:
+        slope_boost = 4.0
+
+    effective_ratio = gas_ratio_pct + slope_boost
+
+    if effective_ratio >= midr_r or delta_kohms >= midr_d:
+        return "ROTTEN"
+    elif effective_ratio >= midf_r or delta_kohms >= midf_d:
+        return "MID_ROTTEN"
+    elif effective_ratio >= fresh_r or delta_kohms >= fresh_d:
+        return "MID_FRESH"
+    else:
+        return "FRESH"
+
+
 
 @dataclass
 class GasReading:
@@ -234,9 +303,11 @@ class GasSensor:
         self._sniff_thread = threading.Thread(target=_sniff_worker, daemon=True)
         self._sniff_thread.start()
 
-    def stop_continuous_sniffing(self) -> ScanGasResult:
+    def stop_continuous_sniffing(self, produce_name: str = "default") -> "ScanGasResult":
         """
         Stops the sniffing thread and computes rich multi-feature gas analytics across the 16-photo cycle.
+        Uses per-produce VOC gas profiles to classify freshness into 4 tiers:
+            FRESH | MID_FRESH | MID_ROTTEN | ROTTEN
         """
         if not self.installed:
             return ScanGasResult(
@@ -324,17 +395,19 @@ class GasSensor:
         avg_hum  = round(sum(r.humidity for r in self._readings) / len(self._readings), 1)
         avg_pres = round(sum(r.pressure for r in self._readings) / len(self._readings), 1)
 
-        # Multi-tiered rot suspicion
-        if gas_ratio >= 20.0 or (gas_ratio >= 15.0 and gas_slope < -0.15) or delta_k >= 8.0:
-            suspicion = "SEVERE_ROT"
-        elif gas_ratio >= 10.0 or (gas_ratio >= 7.0 and gas_slope < -0.08) or delta_k >= 3.5:
-            suspicion = "EARLY_ROT"
-        else:
-            suspicion = "HEALTHY"
+        # Per-produce 4-tier freshness classification (FRESH/MID_FRESH/MID_ROTTEN/ROTTEN)
+        suspicion = classify_gas_freshness(
+            produce_name=produce_name,
+            gas_ratio_pct=gas_ratio,
+            delta_kohms=delta_k,
+            gas_slope_per_sec=gas_slope,
+        )
 
         log.info(
-            "BME688 Analytics: Base=%.1fk | Post=%.1fk | Min=%.1fk | Max=%.1fk | Mean=%.1fk | Std=%.2fk | Drop=%.1f%% | Slope=%.4fk/s | Samples=%d | Suspicion=%s",
-            base_k, post_k, gas_min, gas_max, gas_mean, gas_std, gas_ratio, gas_slope, len(self._readings), suspicion
+            "BME688 Analytics [%s]: Base=%.1fk | Post=%.1fk | Min=%.1fk | Max=%.1fk | "
+            "Mean=%.1fk | Std=%.2fk | Drop=%.1f%% | Slope=%.4fk/s | Samples=%d | Status=%s",
+            produce_name, base_k, post_k, gas_min, gas_max,
+            gas_mean, gas_std, gas_ratio, gas_slope, len(self._readings), suspicion
         )
 
         return ScanGasResult(

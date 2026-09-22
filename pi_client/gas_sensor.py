@@ -1,8 +1,8 @@
 """
-gas_sensor.py — Bosch BME688 Gas / Environmental Sensor Driver (Adaptive)
+gas_sensor.py -- Bosch BME688 Gas / Environmental Sensor Driver (Adaptive)
 ===========================================================================
 Hardware:  Bosch BME688 (I2C address 0x77 or 0x76)
-Wiring:    VCC→3.3V (Pin1), GND→GND (Pin6), SDA→GPIO2 (Pin3), SCL→GPIO3 (Pin5)
+Wiring:    VCC->3.3V (Pin1), GND->GND (Pin6), SDA->GPIO2 (Pin3), SCL->GPIO3 (Pin5)
 
 Chamber Specifications:
     Volume: 27 Liters (closed containment box)
@@ -36,10 +36,10 @@ from config import (
     CHAMBER_VOLUME_LITERS
 )
 
-# ── Per-Produce Gas Freshness Profiles ────────────────────────────────────────
+#    Per-Produce Gas Freshness Profiles                                         
 # Each produce has its own VOC resistance drop thresholds calibrated to its
 # natural decay chemistry inside the 27L sealed chamber.
-# Thresholds are: (ratio_pct, delta_kohms) — whichever is breached first wins.
+# Thresholds are: (ratio_pct, delta_kohms) -- whichever is breached first wins.
 #   FRESH      : ratio < fresh_r   AND delta < fresh_d
 #   MID_FRESH  : ratio < midf_r    AND delta < midf_d
 #   MID_ROTTEN : ratio < midr_r    AND delta < midr_d
@@ -57,7 +57,7 @@ PRODUCE_GAS_PROFILES = {
         "MID_FRESH":  (18.0, 7.0),
         "MID_ROTTEN": (28.0, 11.0),
     },
-    # Eggplant decays more subtly — lower thresholds catch early rot faster.
+    # Eggplant decays more subtly -- lower thresholds catch early rot faster.
     "Eggplant": {
         "FRESH":      (6.0,  2.5),
         "MID_FRESH":  (12.0, 4.5),
@@ -86,7 +86,7 @@ def classify_gas_freshness(produce_name: str, gas_ratio_pct: float,
     midf_r,     midf_d     = profile["MID_FRESH"]
     midr_r,     midr_d     = profile["MID_ROTTEN"]
 
-    # Slope modifier: steep negative confirms active decomposition → upgrade severity
+    # Slope modifier: steep negative confirms active decomposition -> upgrade severity
     slope_boost = 0.0
     if gas_slope_per_sec < -0.15:
         slope_boost = 8.0   # equivalent extra ratio points
@@ -109,15 +109,15 @@ def classify_gas_freshness(produce_name: str, gas_ratio_pct: float,
 @dataclass
 class GasReading:
     """Single BME688 sensor snapshot."""
-    temperature: float = 0.0    # °C
+    temperature: float = 0.0    # C
     humidity:    float = 0.0    # %RH
     pressure:    float = 0.0    # hPa
-    gas_ohms:    float = 0.0    # Ohms (raw)
+    gas_ohms:    float = 0.0    # Ohms (raw high precision)
     timestamp:   float = 0.0
 
     @property
     def gas_kohms(self) -> float:
-        return round(self.gas_ohms / 1000, 2)
+        return round(self.gas_ohms / 1000.0, 3)
 
 
 @dataclass
@@ -126,18 +126,20 @@ class ScanGasResult:
     baseline_kohms: float = 0.0
     post_scan_kohms: float = 0.0
     delta_kohms: float = 0.0           # baseline - post_scan (positive = rot gas drop)
-    gas_min_kohms: float = 0.0         # minimum resistance observed during scan
+    gas_min_kohms: float = 0.0         # minimum resistance observed during scan (smoothed)
     gas_max_kohms: float = 0.0         # maximum resistance observed during scan
     gas_mean_kohms: float = 0.0        # mean resistance across full scan
     gas_std_kohms: float = 0.0         # standard deviation of gas resistance
-    gas_ratio_pct: float = 0.0         # (baseline - min) / baseline * 100% (scale-invariant drop)
+    gas_ratio_pct: float = 0.0         # (baseline - smoothed_min) / baseline * 100% (scale-invariant drop)
     gas_slope_per_sec: float = 0.0     # linear regression rate dR/dt (kOhm/s, negative = active decay)
-    temperature_c: float = 0.0         # average ambient temperature (°C)
+    temperature_c: float = 0.0         # average ambient temperature (C)
     humidity_pct: float = 0.0          # average ambient relative humidity (%RH)
     pressure_hpa: float = 0.0          # ambient barometric pressure (hPa)
     sample_count: int = 0              # total gas snapshots collected across 16-frame cycle
     rot_suspicion: str = "HEALTHY"     # HEALTHY / EARLY_ROT / SEVERE_ROT / NOT_INSTALLED
     installed: bool = True
+    raw_baseline_ohms: float = 0.0     # exact baseline in Ohms
+    raw_post_scan_ohms: float = 0.0    # exact post-scan in Ohms
 
     # Backwards compatibility properties
     @property
@@ -201,7 +203,7 @@ class GasSensor:
                 self._sensor.set_temperature_oversample(bme680.OS_8X)
                 self._sensor.set_filter(bme680.FILTER_SIZE_3)
                 self._sensor.set_gas_status(bme680.ENABLE_GAS_MEAS)
-                self._sensor.set_gas_heater_temperature(320)   # 320°C for VOC
+                self._sensor.set_gas_heater_temperature(320)   # 320C for VOC
                 self._sensor.set_gas_heater_duration(150)
                 self._sensor.select_gas_heater_profile(0)
                 self.installed = True
@@ -216,7 +218,7 @@ class GasSensor:
         self.installed = False
         self._sensor = None
 
-    # ── Single Read ───────────────────────────────────────────────────────────
+    #    Single Read                                                            
 
     def _read_once(self) -> GasReading:
         now = time.time()
@@ -253,7 +255,7 @@ class GasSensor:
             timestamp=now,
         )
 
-    # ── Baseline Calibration ──────────────────────────────────────────────────
+    #    Baseline Calibration                                                   
 
     def calibrate_baseline(self) -> GasReading:
         """Read baseline gas resistance before fruit scan."""
@@ -275,11 +277,11 @@ class GasSensor:
             gas_ohms=round(avg_gas, 1),
             timestamp=time.time(),
         )
-        log.info("BME688 Baseline: %.1f kOhm | Temp: %.1f°C | Humidity: %.1f%%",
+        log.info("BME688 Baseline: %.1f kOhm | Temp: %.1fC | Humidity: %.1f%%",
                  self._baseline.gas_kohms, self._baseline.temperature, self._baseline.humidity)
         return self._baseline
 
-    # ── Continuous Sniffing (Background Thread) ───────────────────────────────
+    #    Continuous Sniffing (Background Thread)                                
 
     def start_continuous_sniffing(self, interval: float = GAS_SNIFF_INTERVAL_SEC):
         """
@@ -338,20 +340,23 @@ class GasSensor:
         # Baseline
         if self._baseline and self._baseline.gas_kohms > 0:
             base_k = self._baseline.gas_kohms
+            base_ohms = self._baseline.gas_ohms
             base_t = self._baseline.temperature
             base_h = self._baseline.humidity
             base_p = self._baseline.pressure
         else:
             first_n = self._readings[:min(3, len(self._readings))]
-            base_k = round(sum(r.gas_kohms for r in first_n) / len(first_n), 2)
+            base_k = round(sum(r.gas_kohms for r in first_n) / len(first_n), 3)
+            base_ohms = sum(r.gas_ohms for r in first_n) / len(first_n)
             base_t = round(sum(r.temperature for r in first_n) / len(first_n), 1)
             base_h = round(sum(r.humidity for r in first_n) / len(first_n), 1)
             base_p = round(sum(r.pressure for r in first_n) / len(first_n), 1)
 
         # Post-scan = average of last 3 samples
         last_n = self._readings[-min(3, len(self._readings)):]
-        post_k = round(sum(r.gas_kohms for r in last_n) / len(last_n), 2)
-        delta_k = round(max(0.0, base_k - post_k), 2)
+        post_k = round(sum(r.gas_kohms for r in last_n) / len(last_n), 3)
+        post_ohms = sum(r.gas_ohms for r in last_n) / len(last_n)
+        delta_k = round(max(0.0, base_k - post_k), 3)
 
         # Statistical features across ALL collected readings
         res_list = [r.gas_kohms for r in self._readings if r.gas_kohms > 0]
@@ -361,20 +366,32 @@ class GasSensor:
             res_list = [post_k]
             time_list = [time.time()]
 
-        gas_min = round(min(res_list), 2)
-        gas_max = round(max(res_list), 2)
-        gas_mean = round(sum(res_list) / len(res_list), 2)
+        raw_gas_min = round(min(res_list), 3)
+        gas_max = round(max(res_list), 3)
+        gas_mean = round(sum(res_list) / len(res_list), 3)
 
         # Standard deviation
         if len(res_list) >= 2:
             import statistics
-            gas_std = round(statistics.stdev(res_list), 2)
+            gas_std = round(statistics.stdev(res_list), 3)
         else:
             gas_std = 0.0
 
-        # Relative drop ratio (%) = (baseline - min) / baseline * 100
+        # Noise-resistant rolling smoothing for minimum:
+        # Avoid letting a brief 1-sample noise spike fake a large gas drop
+        if len(res_list) >= 5:
+            import statistics
+            smoothed_list = [
+                statistics.median(res_list[max(0, i-2):min(len(res_list), i+3)])
+                for i in range(len(res_list))
+            ]
+            gas_min = round(min(smoothed_list), 3)
+        else:
+            gas_min = raw_gas_min
+
+        # Relative drop ratio (%) = (baseline - smoothed_min) / baseline * 100
         if base_k > 0:
-            gas_ratio = round(max(0.0, (base_k - gas_min) / base_k * 100.0), 1)
+            gas_ratio = round(max(0.0, (base_k - gas_min) / base_k * 100.0), 2)
         else:
             gas_ratio = 0.0
 
@@ -404,8 +421,8 @@ class GasSensor:
         )
 
         log.info(
-            "BME688 Analytics [%s]: Base=%.1fk | Post=%.1fk | Min=%.1fk | Max=%.1fk | "
-            "Mean=%.1fk | Std=%.2fk | Drop=%.1f%% | Slope=%.4fk/s | Samples=%d | Status=%s",
+            "BME688 Analytics [%s]: Base=%.2fk | Post=%.2fk | Min=%.2fk | Max=%.2fk | "
+            "Mean=%.2fk | Std=%.2fk | Drop=%.2f%% | Slope=%.4fk/s | Samples=%d | Status=%s",
             produce_name, base_k, post_k, gas_min, gas_max,
             gas_mean, gas_std, gas_ratio, gas_slope, len(self._readings), suspicion
         )
@@ -426,7 +443,43 @@ class GasSensor:
             sample_count=len(self._readings),
             rot_suspicion=suspicion,
             installed=True,
+            raw_baseline_ohms=round(base_ohms, 1),
+            raw_post_scan_ohms=round(post_ohms, 1),
         )
+
+    def export_timeseries_csv(self, filepath: str = None, scan_id: str = "DIAG", produce_name: str = "Unknown") -> str:
+        """
+        Exports full second-by-second raw time-series of all readings during incubation and scan.
+        Columns: relative_sec, timestamp, gas_ohms, gas_kohms, temperature_c, humidity_pct, pressure_hpa
+        """
+        import os, csv
+        if not filepath:
+            from config import TIMESERIES_DATA_DIR
+            os.makedirs(TIMESERIES_DATA_DIR, exist_ok=True)
+            timestamp_str = time.strftime("%Y%m%d_%H%M%S")
+            filepath = os.path.join(TIMESERIES_DATA_DIR, f"bme_timeseries_{produce_name.lower()}_{scan_id}_{timestamp_str}.csv")
+
+        os.makedirs(os.path.dirname(os.path.abspath(filepath)), exist_ok=True)
+        t0 = self._readings[0].timestamp if self._readings else time.time()
+
+        with open(filepath, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["relative_sec", "timestamp", "gas_ohms", "gas_kohms", "temperature_c", "humidity_pct", "pressure_hpa", "scan_id", "produce_name"])
+            for r in self._readings:
+                rel = round(r.timestamp - t0, 2)
+                writer.writerow([
+                    rel,
+                    time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(r.timestamp)),
+                    round(r.gas_ohms, 1),
+                    round(r.gas_ohms / 1000.0, 3),
+                    round(r.temperature, 2),
+                    round(r.humidity, 2),
+                    round(r.pressure, 2),
+                    scan_id,
+                    produce_name,
+                ])
+        log.info("Exported raw time-series (%d snapshots) to: %s", len(self._readings), filepath)
+        return filepath
 
     @staticmethod
     def log_scan_dataset(scan_id: str, fruit_type: str, condition: str, gas_result: ScanGasResult,
@@ -450,7 +503,7 @@ class GasSensor:
             "baseline_gas_kohms", "post_scan_gas_kohms", "delta_gas_kohms",
             "gas_min_kohms", "gas_max_kohms", "gas_mean_kohms", "gas_std_kohms",
             "gas_ratio_pct", "gas_slope_per_sec", "sample_count",
-            "rgb_image_count", "uv_image_count", "rot_suspicion"
+            "rgb_image_count", "uv_image_count", "rot_suspicion", "is_synthetic"
         ]
 
         # Check existing header if file exists
@@ -485,6 +538,7 @@ class GasSensor:
             "rgb_image_count": 8,
             "uv_image_count": 8,
             "rot_suspicion": gas_result.rot_suspicion,
+            "is_synthetic": False,
         }
 
         try:

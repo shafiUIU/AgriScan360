@@ -1,5 +1,5 @@
 """
-main.py — AgriScan 360 Master Orchestrator (Adaptive Multi-Modal Scan)
+main.py -- AgriScan 360 Master Orchestrator (Adaptive Multi-Modal Scan)
 ========================================================================
 Supports:
   - Produce Focus: Tomato, Apple, Eggplant (Brinjal)
@@ -73,9 +73,9 @@ except ImportError:
     log.warning("Pillow not installed. Produce auto-detection will be unavailable.")
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # LED MODE SELECTION
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 
 def prompt_led_mode() -> str:
     """Determine whether to use MOSFET or manual lighting."""
@@ -99,23 +99,38 @@ def prompt_led_mode() -> str:
     return "manual"
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# PRODUCE AUTO-DETECTION (Color Heuristic — Pillow)
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
+# PRODUCE AUTO-DETECTION (Color Heuristic -- Pillow)
+# -----------------------------------------------------------------------------
 
 def _classify_image_bytes(img_bytes: bytes):
     """
-    Analyse a JPEG snapshot and classify the centre-crop by dominant color.
+    Analyse a JPEG snapshot and classify the centre-crop by dominant color & feature heuristics.
 
     Returns (produce_name: str | None, confidence_pct: int)
       - produce_name: 'Tomato', 'Apple', 'Eggplant', or None if unrecognised
       - confidence_pct: 0-97 integer
 
-    Color heuristics (HSV space):
-      Eggplant : > 35% of centre pixels are very dark (V < 0.25)
-      Tomato   : > 25% of centre pixels are red hue (0-30 or 330-360 deg), high saturation
-      Apple    : > 20% of centre pixels are green hue (90-150 deg), high saturation
-                 OR red-dominant but brighter/rounder than typical tomato
+    Classification Logic:
+      1. Background & Shadow Rejection:
+         Pixels with very low brightness (V < 0.12) or neutral grey/dark background
+         (V < 0.32 and S < 0.20) are turntable surface or shadows and are NOT counted
+         towards produce identification.
+      2. Eggplant (Brinjal):
+         Must show true purple/violet chromatic presence:
+           - Hue in purple/violet band (240 - 335 deg) with visible saturation (S >= 0.18), OR
+           - Deep purple where R > G + 8 and B > G + 4 with S >= 0.15.
+         Pure black/grey items (R ~ G ~ B, low saturation, shadows) are rejected.
+      3. Green / Yellow-Green Apple:
+         Vibrant green hue (75 - 155 deg) or gold/yellow (40 - 75 deg) with S >= 0.22, V >= 0.20.
+      4. Red Produce (Tomato vs Red Apple):
+         Red hue (0 - 30 deg or 335 - 360 deg) with S >= 0.28, V >= 0.18.
+         - Red Apple: Features yellow/green undertones or higher green ratio (G/R > 0.36 or yellow+green >= 8%).
+         - Tomato: Uniform deep crimson red with low green ratio (G/R <= 0.36) and high saturation.
+      5. Unrecognised / Non-Produce (None):
+         - Items dominated by blue/cyan hues (160 - 245 deg) -> vetoed as non-produce.
+         - Neutral objects (grey, white, black, brown cardboard, phone, keys, empty turntable).
+         - Objects lacking sufficient produce-characteristic pixels (< 18-20%).
     """
     if not PIL_AVAILABLE or not img_bytes:
         return None, 0
@@ -136,40 +151,101 @@ def _classify_image_bytes(img_bytes: bytes):
         if n == 0:
             return None, 0
 
-        dark_count = red_count = green_count = 0
+        eggplant_purple_count = 0
+        tomato_red_count = 0
+        apple_green_count = 0
+        apple_yellow_count = 0
+        red_apple_count = 0
+        neutral_dark_count = 0
+        blue_cyan_count = 0
+        red_pixel_g_r_ratios = []
 
         for r, g, b in pixels:
             hf, sf, vf = colorsys.rgb_to_hsv(r / 255.0, g / 255.0, b / 255.0)
             hue_deg = hf * 360.0
 
-            if vf < 0.25:                                   # Very dark → Eggplant
-                dark_count += 1
-            elif sf > 0.30:                                 # Saturated colour
-                if hue_deg <= 30 or hue_deg >= 330:        # Red hue band
-                    red_count += 1
-                elif 90 <= hue_deg <= 150:                  # Green hue band
-                    green_count += 1
+            # 1. Neutral shadow / dark background check (low saturation, dark)
+            is_neutral_dark = (vf < 0.30 and sf < 0.20) or (vf < 0.12)
+            if is_neutral_dark:
+                neutral_dark_count += 1
+                continue
 
-        dark_pct  = dark_count  / n * 100
-        red_pct   = red_count   / n * 100
-        green_pct = green_count / n * 100
+            # 2. Eggplant signature:
+            # Deep violet/purple hue (240 - 335 deg) with visible saturation,
+            # OR dark purple where Red and Blue are both significantly higher than Green
+            is_purple_hue = (240 <= hue_deg <= 335) and (sf >= 0.18)
+            is_dark_purple = (vf < 0.45) and (sf >= 0.15) and (r > g + 8) and (b > g + 4)
+            if is_purple_hue or is_dark_purple:
+                eggplant_purple_count += 1
+                continue
 
-        log.info("Detect snapshot analysis — dark=%.1f%% red=%.1f%% green=%.1f%%",
-                 dark_pct, red_pct, green_pct)
+            # 3. Green Apple signature:
+            # Green hue (75 - 155 deg) with decent saturation and brightness
+            if (75 <= hue_deg <= 155) and (sf >= 0.22) and (vf >= 0.20):
+                apple_green_count += 1
+                continue
 
-        if dark_pct >= 35:
-            conf = int(min(dark_pct * 1.8, 97))
-            return "Eggplant", conf
-        elif red_pct >= 25:
-            # Distinguish Tomato vs Apple (red variety):
-            # Tomatoes are darker red (lower V avg in red pixels vs apple)
-            conf = int(min(red_pct * 2.2, 97))
-            return "Tomato", conf
-        elif green_pct >= 20:
-            conf = int(min(green_pct * 2.8, 97))
-            return "Apple", conf
-        else:
+            # 4. Yellow / Yellow-Green Apple signature (Gala / Golden Delicious / Apple undertones)
+            if (40 <= hue_deg < 75) and (sf >= 0.25) and (vf >= 0.30):
+                apple_yellow_count += 1
+                continue
+
+            # 5. Red pixels (Tomato vs Red Apple):
+            if ((hue_deg <= 30) or (hue_deg >= 335)) and (sf >= 0.28) and (vf >= 0.18):
+                g_r = g / max(1, r)
+                red_pixel_g_r_ratios.append(g_r)
+                if g_r > 0.36:
+                    red_apple_count += 1
+                else:
+                    tomato_red_count += 1
+                continue
+
+            # 6. Blue / Cyan (definitely non-produce)
+            if (160 <= hue_deg <= 245) and (sf >= 0.25):
+                blue_cyan_count += 1
+                continue
+
+        purple_pct = (eggplant_purple_count / n) * 100.0
+        green_pct  = (apple_green_count / n) * 100.0
+        yellow_pct = (apple_yellow_count / n) * 100.0
+        red_pct    = ((tomato_red_count + red_apple_count) / n) * 100.0
+        blue_pct   = (blue_cyan_count / n) * 100.0
+        dark_pct   = (neutral_dark_count / n) * 100.0
+
+        log.info(
+            "Detect snapshot analysis -- purple=%.1f%% red=%.1f%% green=%.1f%% yellow=%.1f%% blue=%.1f%% dark=%.1f%%",
+            purple_pct, red_pct, green_pct, yellow_pct, blue_pct, dark_pct,
+        )
+
+        # Non-produce veto: If significant blue/cyan pixels exist, it cannot be our target produce
+        if blue_pct >= 15.0:
+            log.info("Non-produce blue/cyan pixels detected (%.1f%%) -- rejecting object.", blue_pct)
             return None, 0
+
+        # Decision tree:
+        # A. Eggplant
+        if purple_pct >= 20.0:
+            conf = int(min(purple_pct * 2.5, 95))
+            return "Eggplant", conf
+
+        # B. Green/Yellow Apple
+        if green_pct >= 18.0 or (green_pct + yellow_pct >= 22.0):
+            conf = int(min((green_pct + yellow_pct) * 2.2, 95))
+            return "Apple", conf
+
+        # C. Red Produce: Tomato vs Red Apple
+        if red_pct >= 20.0:
+            mean_gr = sum(red_pixel_g_r_ratios) / len(red_pixel_g_r_ratios) if red_pixel_g_r_ratios else 0.0
+            # Red Apple features yellow/green undertones or higher G/R ratio
+            if (yellow_pct + green_pct >= 8.0) or (mean_gr > 0.36):
+                conf = int(min(red_pct * 2.0, 92))
+                return "Apple", conf
+            else:
+                conf = int(min(red_pct * 2.2, 96))
+                return "Tomato", conf
+
+        # If no produce matched dominant criteria (e.g. random neutral or unrecognised object)
+        return None, 0
 
     except Exception as exc:
         log.warning("Produce detection image analysis failed: %s", exc)
@@ -189,10 +265,10 @@ def detect_produce(camera: "CameraController", lights: "LightController"):
         return args.produce.strip().title(), 99
 
     if not PIL_AVAILABLE:
-        log.warning("Pillow not installed — produce auto-detection skipped.")
+        log.warning("Pillow not installed -- produce auto-detection skipped.")
         return None, 0
 
-    # ── Light management for detection snapshot ────────────────────────────
+    # -- Light management for detection snapshot ----------------------------
     if lights.mode == "auto" and lights._white_dev:
         if lights._uv_dev:
             lights._uv_dev.off()
@@ -208,9 +284,9 @@ def detect_produce(camera: "CameraController", lights: "LightController"):
         except EOFError:
             pass
         img_bytes = camera.capture_jpeg()
-        print("    [Detection snapshot taken — you may turn off the White LED now]")
+        print("    [Detection snapshot taken -- you may turn off the White LED now]")
     else:
-        # Simulate mode — capture test image
+        # Simulate mode -- capture test image
         img_bytes = camera.capture_jpeg()
         detected, conf = _classify_image_bytes(img_bytes)
         if detected is None:
@@ -220,9 +296,9 @@ def detect_produce(camera: "CameraController", lights: "LightController"):
     return _classify_image_bytes(img_bytes)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # MAIN SCAN FUNCTION
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 
 def run_scan(motor:   "StepperMotor",
              lights:  "LightController",
@@ -232,10 +308,10 @@ def run_scan(motor:   "StepperMotor",
              uploader: "ScanUploader") -> dict:
     """
     Execute one complete AgriScan 360 cycle:
-      Step A — Empty-box BME688 baseline calibration
-      Step B — Place produce, close box, auto-detect produce type
-      Step C — 8-stop 360-deg turntable scan (MOSFET: fully automatic / Manual: Enter-per-stop)
-      Step D — Gas analytics, upload, per-produce freshness result
+      Step A -- Empty-box BME688 baseline calibration
+      Step B -- Place produce, close box, auto-detect produce type
+      Step C -- 8-stop 360-deg turntable scan (MOSFET: fully automatic / Manual: Enter-per-stop)
+      Step D -- Gas analytics, upload, per-produce freshness result
     """
     rgb_images: list = []
     uv_images:  list = []
@@ -247,7 +323,7 @@ def run_scan(motor:   "StepperMotor",
     print(f"  Gas Sensor: {'Active' if gas.installed else 'Not Installed (Vision Only)'}")
     print("=" * 62)
 
-    # ── Step A: Empty chamber — BME688 clean-air baseline ────────────────────
+    # -- Step A: Empty chamber -- BME688 clean-air baseline --------------------
     if gas.installed:
         print("\n[>] STEP A: Remove all produce from the box.")
         print("[>] Close the lid tightly, then press [Enter] to calibrate clean air...",
@@ -291,9 +367,9 @@ def run_scan(motor:   "StepperMotor",
         except Exception as exc:
             log.warning("Could not log empty box baseline: %s", exc)
     else:
-        print("\n[>] BME688 not installed — skipping gas baseline calibration.")
+        print("\n[>] BME688 not installed -- skipping gas baseline calibration.")
 
-    # ── Step B: Place produce, auto-detect ───────────────────────────────────
+    # -- Step B: Place produce, auto-detect -----------------------------------
     produce_name = None
     if args.produce:
         produce_name = args.produce.strip().title()
@@ -331,12 +407,12 @@ def run_scan(motor:   "StepperMotor",
             continue  # Loop back to Step B
 
         if confidence >= 70:
-            # Auto-proceed — high confidence
-            print(f"\n[>] Detected: {detected}  ({confidence}% confidence) — proceeding automatically.")
+            # Auto-proceed -- high confidence
+            print(f"\n[>] Detected: {detected}  ({confidence}% confidence) -- proceeding automatically.")
             produce_name = detected
         else:
-            # Low confidence — ask operator
-            print(f"\n[?] Detected: {detected}  ({confidence}% confidence — LOW)")
+            # Low confidence -- ask operator
+            print(f"\n[?] Detected: {detected}  ({confidence}% confidence -- LOW)")
             try:
                 ans = input("[?] Is this correct? [Y/n]: ").strip().lower()
             except EOFError:
@@ -350,14 +426,33 @@ def run_scan(motor:   "StepperMotor",
     log.info("Produce confirmed: %s", produce_name)
     display.show_scanning(stop=0, total=NUM_SCAN_STOPS)
 
-    # Optional pre-scan incubation (default 0 — disabled)
-    if cfg.GAS_PRE_SCAN_INCUBATION_SEC > 0:
-        print(f"[>] Incubating chamber for {cfg.GAS_PRE_SCAN_INCUBATION_SEC}s "
-              "(set GAS_PRE_SCAN_INCUBATION_SEC=0 in config.py to skip)...")
-        time.sleep(cfg.GAS_PRE_SCAN_INCUBATION_SEC)
-
-    # ── Step C: BME starts sniffing + 8-stop turntable scan ──────────────────
+    # -- Step C: Start continuous BME sniffing (Incubation + 8-Stop Scan) ----
     gas.start_continuous_sniffing()
+
+    # Pre-scan incubation with live progress feedback
+    if cfg.GAS_PRE_SCAN_INCUBATION_SEC > 0:
+        inc_total = cfg.GAS_PRE_SCAN_INCUBATION_SEC
+        print(f"\n[>] Chamber Sealed: Incubating for {inc_total}s (5 min) to accumulate VOCs...")
+        print(f"[>] Sniffing active in background (interval: {cfg.GAS_SNIFF_INTERVAL_SEC}s).")
+        t_inc_start = time.time()
+        try:
+            while True:
+                elapsed = int(time.time() - t_inc_start)
+                remaining = max(0, inc_total - elapsed)
+                latest = gas._readings[-1] if gas._readings else None
+                cur_k = f"{latest.gas_kohms:6.2f} kOhm ({int(latest.gas_ohms)} Ohm)" if latest else "measuring..."
+                cur_t = f"{latest.temperature:.1f}C" if latest else "--"
+                cur_h = f"{latest.humidity:.1f}%" if latest else "--"
+
+                sys.stdout.write(f"\r    [Incubating] {elapsed:3d}s / {inc_total}s | Gas: {cur_k} | {cur_t} | {cur_h}  ")
+                sys.stdout.flush()
+
+                if remaining <= 0:
+                    break
+                time.sleep(1.0)
+        except KeyboardInterrupt:
+            print("\n[!] Incubation skipped by operator.")
+        print("\n[>] Incubation complete. Starting 8-stop multi-spectral scan...")
 
     log.info("=== Starting scan for %s (Chamber %.1fL) ===", produce_name, CHAMBER_VOLUME_LITERS)
     motor.set_direction(clockwise=True)
@@ -369,7 +464,7 @@ def run_scan(motor:   "StepperMotor",
             display.show_scanning(stop=stop, total=NUM_SCAN_STOPS)
             print(f"\n--- [Stop {stop + 1}/{NUM_SCAN_STOPS}  ({angle} deg)] ---")
 
-            # A. White LED ON → RGB snap → White LED OFF
+            # A. White LED ON -> RGB snap -> White LED OFF
             with lights.capture_white(stop_index=stop, angle=angle):
                 rgb_bytes = camera.capture_jpeg()
                 rgb_images.append(rgb_bytes)
@@ -377,13 +472,13 @@ def run_scan(motor:   "StepperMotor",
 
             time.sleep(0.1)   # brief settle between LEDs
 
-            # B. UV-A LED ON → UV snap → UV-A LED OFF
+            # B. UV-A LED ON -> UV snap -> UV-A LED OFF
             with lights.capture_uv(stop_index=stop, angle=angle):
                 uv_bytes = camera.capture_jpeg()
                 uv_images.append(uv_bytes)
                 log.info("  -> [UV-A] Stop %d/8 (%d deg)", stop + 1, angle)
 
-            # C. Rotate 45 deg (every stop — including last stop returns to 0 deg home)
+            # C. Rotate 45 deg (every stop -- including last stop returns to 0 deg home)
             if stop < NUM_SCAN_STOPS - 1:
                 next_angle = (stop + 1) * 45
                 print(f"[>] Rotating 45 deg to Stop {stop + 2}/{NUM_SCAN_STOPS} ({next_angle} deg)...")
@@ -402,15 +497,23 @@ def run_scan(motor:   "StepperMotor",
         motor.disable()
         lights.off_all()
 
-    # ── Step D: Stop BME sniffing — per-produce gas analytics ────────────────
+    # -- Step D: Stop BME sniffing -- per-produce gas analytics ----------------
     gas_result = gas.stop_continuous_sniffing(produce_name=produce_name)
 
     if gas.installed:
         _print_gas_table(gas_result, produce_name)
+        # Save raw high-resolution timeseries CSV
+        if getattr(cfg, "GAS_LOG_RAW_TIMESERIES", True):
+            try:
+                scan_tag = f"SCAN_{int(time.time())}"
+                ts_path = gas.export_timeseries_csv(scan_id=scan_tag, produce_name=produce_name)
+                print(f"[+] Raw time-series logged: {ts_path}")
+            except Exception as exc:
+                log.warning("Could not export raw timeseries: %s", exc)
     else:
         log.info("Gas sensing bypassed (BME688 not installed). Proceeding vision-only.")
 
-    # ── Upload all 16 frames + gas result ────────────────────────────────────
+    # -- Upload all 16 frames + gas result ------------------------------------
     display.show_uploading()
     result = uploader.upload_scan(
         rgb_images=rgb_images,
@@ -419,7 +522,7 @@ def run_scan(motor:   "StepperMotor",
         produce_name=produce_name,
     )
 
-    # ── Show final result ─────────────────────────────────────────────────────
+    # -- Show final result -----------------------------------------------------
     status     = result.get("status",     "UNKNOWN")
     confidence = result.get("confidence", 0.0)
     gas_delta  = result.get("gas_delta",  gas_result.delta_kohms)
@@ -437,8 +540,8 @@ def run_scan(motor:   "StepperMotor",
     log.info("=== System Assumption: %s (%.1f%%) | Gas Delta: %.2f kOhm ===",
              status, confidence, gas_delta)
 
-    # ── Step E: Ground-Truth Verification & Feedback Loop ─────────────────────
-    # "You assume, I correct" — Operator verifies or corrects the AI's judgment
+    # -- Step E: Ground-Truth Verification & Feedback Loop ---------------------
+    # "You assume, I correct" -- Operator verifies or corrects the AI's judgment
     actual_condition = prompt_ground_truth_correction(assumed_status=status)
 
     # Record to dataset CSV for ML training (records both ground truth and prediction)
@@ -502,19 +605,19 @@ def prompt_ground_truth_correction(assumed_status: str) -> str:
         print("  Invalid selection. Please enter 1, 2, 3, or 4.")
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # DISPLAY HELPERS
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 
 def _print_gas_table(gas_result: "ScanGasResult", produce_name: str):
-    """Pretty-print the BME688 headspace gas analytics table."""
+    """Pretty-print the BME688 headspace gas analytics table with raw Ohm precision."""
     print("\n+--- BME688 Headspace Gas Analytics -------------------+")
     print(f"|  Produce             : {produce_name:<30} |")
-    print(f"|  Baseline Resistance : {gas_result.baseline_kohms:6.2f} kOhm                    |")
-    print(f"|  Post-Scan Resistance: {gas_result.post_scan_kohms:6.2f} kOhm                    |")
-    print(f"|  Min / Max Observed  : {gas_result.gas_min_kohms:6.2f} / {gas_result.gas_max_kohms:6.2f} kOhm        |")
-    print(f"|  Mean / Std Dev      : {gas_result.gas_mean_kohms:6.2f} +/- {gas_result.gas_std_kohms:5.2f} kOhm       |")
-    print(f"|  Relative Drop Ratio : {gas_result.gas_ratio_pct:5.1f}%                         |")
+    print(f"|  Baseline Resistance : {gas_result.baseline_kohms:6.3f} kOhm ({gas_result.raw_baseline_ohms:8.0f} Ohm)        |")
+    print(f"|  Post-Scan Resistance: {gas_result.post_scan_kohms:6.3f} kOhm ({gas_result.raw_post_scan_ohms:8.0f} Ohm)        |")
+    print(f"|  Min (Smoothed) / Max: {gas_result.gas_min_kohms:6.3f} / {gas_result.gas_max_kohms:6.3f} kOhm        |")
+    print(f"|  Mean / Std Dev      : {gas_result.gas_mean_kohms:6.3f} +/- {gas_result.gas_std_kohms:5.3f} kOhm       |")
+    print(f"|  Relative Drop Ratio : {gas_result.gas_ratio_pct:5.2f}%                         |")
     print(f"|  Decay Rate (dR/dt)  : {gas_result.gas_slope_per_sec:+7.4f} kOhm/s                  |")
     print(f"|  Environmental       : {gas_result.temperature_c:4.1f}C | "
           f"{gas_result.humidity_pct:4.1f}%RH | {gas_result.pressure_hpa:6.1f}hPa |")
@@ -547,12 +650,12 @@ def _print_result(produce_name: str, status: str, confidence: float,
     print("=" * 62)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # ENTRY POINT
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 
 def main():
-    log.info("AgriScan 360 v2 — Adaptive Master Orchestrator starting (simulate=%s)", SIM)
+    log.info("AgriScan 360 v2 -- Adaptive Master Orchestrator starting (simulate=%s)", SIM)
 
     led_mode = prompt_led_mode()
 
@@ -583,13 +686,13 @@ def main():
             result = run_scan(motor, lights, camera, gas, display, uploader)
             log.info("Scan session complete: %s", result)
 
-            # Brief pause between scans — gives operator time to see the result
+            # Brief pause between scans -- gives operator time to see the result
             time.sleep(3)
 
             if args.no_loop:
                 log.info("--no-loop flag set. Exiting after single scan.")
                 break
-            # No "scan another?" prompt — automatically loops back to Step A
+            # No "scan another?" prompt -- automatically loops back to Step A
 
     except KeyboardInterrupt:
         log.info("Shutdown requested by operator (Ctrl+C).")

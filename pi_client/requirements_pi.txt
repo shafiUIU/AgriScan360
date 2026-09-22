@@ -1,23 +1,24 @@
+# =============================================================================
+# Raspberry Pi 5 — AgriScan 360 Client Dependencies
+# =============================================================================
+# Install on Pi inside venv:  pip install -r requirements_pi.txt
 
-# Raspberry Pi 5 — AgriScan 360 dependencies
-# Install on Pi with:  pip install -r requirements_pi.txt
+# GPIO & Stepper Motor / MOSFET Control
+gpiozero>=2.0
+lgpio>=0.2.2.0; sys_platform == "linux"
 
-# GPIO & Hardware
-gpiozero>=2.0           # GPIO control (native RPi 5 / RP1 support)
-lgpio>=0.2.2.0          # Required backend for gpiozero on RPi 5
+# Gas Sensor (BME688)
+bme680>=1.1.1
+smbus2>=0.4.3
 
-# Camera
-picamera2>=0.3.12       # Official RPi camera library for Camera Module 2
+# OLED Display (SSD1306 0.96" I2C)
+luma.oled>=3.13.0
+luma.core>=2.4.2
 
-# Gas Sensor
-bme680>=1.1.1           # Bosch BME680/BME688 I2C driver
+# Image Processing & Produce Auto-Detection
+Pillow>=10.0.0
 
-# OLED Display
-luma.oled>=3.13.0       # SSD1306 display library
-luma.core>=2.4.2        # luma core rendering engine
-Pillow>=10.0.0          # Image processing for OLED canvas
-
-# HTTP Client (for uploading to laptop server)
+# HTTP Client (Pi to Laptop Server communication)
 requests>=2.31.0
 
 # Utilities

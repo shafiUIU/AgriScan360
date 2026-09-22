@@ -51,11 +51,13 @@ MOSFET_UV_HOLD_SEC    = 5.0         # UV-A LED ON hold time in MOSFET auto mode 
 # ── Gas Sensor & Chamber Settings ─────────────────────────────────────────────
 CHAMBER_VOLUME_LITERS    = 27.0  # 27L closed container volume
 BME688_I2C_ADDRESSES     = [0x77, 0x76]  # Auto-probes both Bosch I2C addresses
-GAS_BASELINE_READS       = 10     # baseline averaging count
+GAS_BASELINE_READS       = 10    # baseline averaging count
 GAS_BASELINE_DELAY       = 0.5   # seconds between baseline reads
 GAS_SNIFF_INTERVAL_SEC   = 0.5   # continuous sniffing sample interval during scan
-GAS_DELTA_THRESHOLD      = 5.0   # kΩ drop indicating high rot suspicion
-GAS_PRE_SCAN_INCUBATION_SEC = 0  # seconds to wait after sealing lid before sniffing (0 = skip)
+GAS_DELTA_THRESHOLD      = 5.0   # kΩ drop indicating high rot suspicion (placeholder assumption)
+GAS_PRE_SCAN_INCUBATION_SEC = 300  # 5 minutes (300s) closed-box gas accumulation incubation
+GAS_LOG_RAW_TIMESERIES   = True  # Save high-resolution per-second raw ohm timeseries for diagnostic analysis
+TIMESERIES_DATA_DIR      = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "datasets", "timeseries")
 
 # ── Produce List (Strict Focus on 3 Target Produce Items) ─────────────────────
 SUPPORTED_PRODUCE = [

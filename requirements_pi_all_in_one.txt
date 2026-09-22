@@ -1,16 +1,21 @@
 # =============================================================================
-# AgriScan 360 — Single-Device Standalone Pi Requirements
+# AgriScan 360 — Single-Device Standalone Pi Requirements (All-in-One)
 # =============================================================================
-# Run on the Raspberry Pi:
-#   python3 -m venv --system-site-packages venv
-#   source venv/bin/activate
-#   pip install -r requirements_pi_all_in_one.txt
-#   python3 -m ensurepip --upgrade
-#   python3 -m pip install --upgrade pip
-#   python3 -m pip install -r requirements_pi_all_in_one.txt
+# Run on Raspberry Pi 5 (Raspberry Pi OS Bookworm):
+#
+#   1. Create virtual environment with system site packages (enables picamera2):
+#      python3 -m venv --system-site-packages venv
+#      source venv/bin/activate
+#
+#   2. Bootstrap pip if missing from the venv (standard Bookworm behavior):
+#      python3 -m ensurepip --upgrade
+#      python3 -m pip install --upgrade pip
+#
+#   3. Install all dependencies:
+#      python3 -m pip install -r requirements_pi_all_in_one.txt
 # =============================================================================
 
-# ── Web Server & Database (Hosting FastAPI on Pi) ────────────────────────────
+# ── Web Server & Database (Hosting FastAPI Server on Pi) ─────────────────────
 fastapi>=0.111.0
 uvicorn[standard]>=0.29.0
 sqlalchemy>=2.0.0
@@ -18,18 +23,24 @@ pydantic>=2.6.0
 python-multipart>=0.0.9
 aiofiles>=23.2.1
 
-# ── AI Engine & Image Processing (Running AI on Pi) ──────────────────────────
+# ── AI Engine & Image Processing ─────────────────────────────────────────────
 Pillow>=10.0.0
 numpy>=1.24.0
 opencv-python-headless>=4.8.0
 onnxruntime>=1.16.0; platform_machine != "armv7l"
 
-# ── Sensors & Hardware (BME688, OLED, Motor) ─────────────────────────────────
-bme680>=1.0.5
-adafruit-circuitpython-ssd1306>=2.12.0
+# ── ML Training & Telemetry Analytics (training/train_bme_only.py) ───────────
+pandas>=2.0.0
+scikit-learn>=1.3.0
+
+# ── Sensors & Hardware (BME688, SSD1306 OLED, Stepper Motor, LEDs) ──────────
+bme680>=1.1.1
+smbus2>=0.4.3
+luma.oled>=3.13.0
+luma.core>=2.4.2
 gpiozero>=2.0
 lgpio>=0.2.2.0; sys_platform == "linux"
 
-# ── Network & Utilities ──────────────────────────────────────────────────────
+# ── Network, HTTP Client & Utilities ─────────────────────────────────────────
 requests>=2.31.0
 python-dateutil>=2.8.2

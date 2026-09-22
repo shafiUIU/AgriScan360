@@ -21,8 +21,9 @@ Datasets to train real model (DO NOT DOWNLOAD YET — user will do manually):
 import io
 import logging
 import os
+import pickle
 import time
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 
 log = logging.getLogger(__name__)
 
@@ -329,6 +330,76 @@ class AIClassifier:
                 self.available = is_avail
         return _LegacyWrapper(self.model_loaded)
 
+    def _predict_gas_model(
+        self,
+        produce_name: str,
+        gas_delta: float,
+        gas_ratio_pct: float,
+        gas_slope_per_sec: float,
+        gas_min_kohms: float,
+        gas_mean_kohms: float,
+        gas_std_kohms: float,
+        temperature_c: float,
+        humidity_pct: float,
+    ) -> Tuple[Optional[str], Optional[float], Optional[str]]:
+        """
+        Attempts to run trained BME Random Forest model (.pkl) from laptop_server/models/.
+        Checks:
+          1. models/bme_model_<produce>.pkl (e.g. bme_model_tomato.pkl)
+          2. models/bme_model_unified.pkl
+        Returns (predicted_status, rot_prob_0_to_1, model_name) or (None, None, None).
+        """
+        model_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models")
+        produce_clean = (produce_name or "").lower().strip()
+        candidates = [
+            (os.path.join(model_dir, f"bme_model_{produce_clean}.pkl"), f"bme_rf_{produce_clean}"),
+            (os.path.join(model_dir, "bme_model_unified.pkl"), "bme_rf_unified"),
+        ]
+
+        model_entry = next(((p, name) for p, name in candidates if os.path.exists(p)), None)
+        if not model_entry:
+            return None, None, None
+
+        model_path, model_tag = model_entry
+        try:
+            with open(model_path, "rb") as f:
+                artifact = pickle.load(f)
+            rf_model = artifact["model"]
+            features = artifact["features"]
+            classes = list(artifact.get("classes", getattr(rf_model, "classes_", [])))
+
+            feat_map = {
+                "gas_ratio_pct": gas_ratio_pct,
+                "delta_gas_kohms": gas_delta,
+                "gas_slope_per_sec": gas_slope_per_sec,
+                "gas_min_kohms": gas_min_kohms if gas_min_kohms > 0 else (200.0 - gas_delta),
+                "gas_mean_kohms": gas_mean_kohms if gas_mean_kohms > 0 else 200.0,
+                "gas_std_kohms": gas_std_kohms,
+                "temperature_c": temperature_c if temperature_c > 0 else 25.0,
+                "humidity_pct": humidity_pct if humidity_pct > 0 else 60.0,
+            }
+            x_vec = np.array([[feat_map.get(k, 0.0) for k in features]], dtype=np.float32)
+            predicted_cls = str(rf_model.predict(x_vec)[0]).upper()
+
+            if hasattr(rf_model, "predict_proba"):
+                probs = rf_model.predict_proba(x_vec)[0]
+                prob_dict = {str(c).upper(): p for c, p in zip(classes, probs)}
+                rot_weight = (
+                    prob_dict.get("ROTTEN", 0.0) * 1.0 +
+                    prob_dict.get("MID_ROTTEN", 0.0) * 0.70 +
+                    prob_dict.get("MID_FRESH", 0.0) * 0.35 +
+                    prob_dict.get("FRESH", 0.0) * 0.05
+                )
+            else:
+                weights = {"ROTTEN": 0.95, "MID_ROTTEN": 0.70, "MID_FRESH": 0.35, "FRESH": 0.05}
+                rot_weight = weights.get(predicted_cls, 0.3)
+
+            log.info("BME ML Model (%s) predicted: %s (rot score: %.3f)", model_tag, predicted_cls, rot_weight)
+            return predicted_cls, round(rot_weight, 3), model_tag
+        except Exception as exc:
+            log.warning("Could not execute BME ML model: %s", exc)
+            return None, None, None
+
     def classify(
         self,
         rgb_images:  List[bytes],   # 8 JPEG bytes (white light, 8 angles)
@@ -338,6 +409,11 @@ class AIClassifier:
         gas_ratio_pct: float = 0.0, # relative percentage drop (scale-invariant)
         gas_slope_per_sec: float = 0.0, # rate of change dR/dt (kOhm/s)
         produce_name: str = "default",
+        gas_min_kohms: float = 0.0,
+        gas_mean_kohms: float = 0.0,
+        gas_std_kohms: float = 0.0,
+        temperature_c: float = 0.0,
+        humidity_pct: float = 0.0,
     ) -> dict:
         """
         Full multi-modal classification.
@@ -347,9 +423,15 @@ class AIClassifier:
 
         # Choose mode based on which models are available
         if self._rgb_onnx.available or self._uv_onnx.available:
-            result = self._neural_classify(rgb_images, uv_images, gas_delta, rot_suspicion, gas_ratio_pct, gas_slope_per_sec, produce_name)
+            result = self._neural_classify(
+                rgb_images, uv_images, gas_delta, rot_suspicion, gas_ratio_pct, gas_slope_per_sec, produce_name,
+                gas_min_kohms, gas_mean_kohms, gas_std_kohms, temperature_c, humidity_pct
+            )
         else:
-            result = self._rule_classify(rgb_images, uv_images, gas_delta, rot_suspicion, gas_ratio_pct, gas_slope_per_sec, produce_name)
+            result = self._rule_classify(
+                rgb_images, uv_images, gas_delta, rot_suspicion, gas_ratio_pct, gas_slope_per_sec, produce_name,
+                gas_min_kohms, gas_mean_kohms, gas_std_kohms, temperature_c, humidity_pct
+            )
 
         result["inference_ms"] = round((time.time() - start) * 1000, 1)
         log.info("Classification complete [%s]: %s (%.1f%%) in %.0fms",
@@ -358,10 +440,15 @@ class AIClassifier:
 
     # ── Rule-Based Classifier ─────────────────────────────────────────────────
 
-    def _rule_classify(self, rgb_images, uv_images, gas_delta, rot_suspicion, gas_ratio_pct=0.0, gas_slope_per_sec=0.0, produce_name="default") -> dict:
+    def _rule_classify(
+        self, rgb_images, uv_images, gas_delta, rot_suspicion,
+        gas_ratio_pct=0.0, gas_slope_per_sec=0.0, produce_name="default",
+        gas_min_kohms=0.0, gas_mean_kohms=0.0, gas_std_kohms=0.0,
+        temperature_c=0.0, humidity_pct=0.0
+    ) -> dict:
         """
-        Heuristic multi-pillar fusion without a trained model.
-        Active until you download datasets and train the ONNX model.
+        Heuristic multi-pillar fusion without a trained vision model.
+        Automatically loads BME ML model (.pkl) if trained.
         """
         # Analyse all 8 angles
         rgb_feats = [ImageAnalyzer.analyze_rgb(img) for img in rgb_images]
@@ -371,7 +458,26 @@ class AIClassifier:
         # Pillar scores (0-1, higher = more rotten)
         p1_score = agg["rgb_rot_score"]            # RGB surface rot
         p2_score = agg["uv_fluorescence_score"]    # UV fluorescence
-        p3_score = self._gas_score(gas_delta, gas_ratio_pct, gas_slope_per_sec, produce_name)  # Enhanced Gas VOC
+
+        # Check for trained BME ML model (.pkl)
+        ml_status, ml_rot_score, bme_tag = self._predict_gas_model(
+            produce_name=produce_name,
+            gas_delta=gas_delta,
+            gas_ratio_pct=gas_ratio_pct,
+            gas_slope_per_sec=gas_slope_per_sec,
+            gas_min_kohms=gas_min_kohms,
+            gas_mean_kohms=gas_mean_kohms,
+            gas_std_kohms=gas_std_kohms,
+            temperature_c=temperature_c,
+            humidity_pct=humidity_pct,
+        )
+
+        if ml_rot_score is not None:
+            p3_score = ml_rot_score
+            gas_model_used = bme_tag
+        else:
+            p3_score = self._gas_score(gas_delta, gas_ratio_pct, gas_slope_per_sec, produce_name)
+            gas_model_used = "gas_rules"
 
         # Weighted fusion
         fused = p1_score * 0.40 + p2_score * 0.35 + p3_score * 0.25
@@ -402,7 +508,7 @@ class AIClassifier:
             reason = (
                 f"Vision heuristic estimated {status} (RGB: {p1_score:.2f}, UV: {p2_score:.2f}) "
                 f"but gas sensor detected elevated VOC levels ({rot_suspicion}, DeltaGas={gas_delta:.1f} kOhm, "
-                f"Drop={gas_ratio_pct:.1f}%, Slope={gas_slope_per_sec:+.4f}). Status adjusted to MID_ROTTEN."
+                f"Drop={gas_ratio_pct:.1f}%, Slope={gas_slope_per_sec:+.4f}, Model={gas_model_used}). Status adjusted to MID_ROTTEN."
             )
         else:
             reason = self._build_reason(status, p1_score, p2_score, p3_score,
@@ -412,7 +518,7 @@ class AIClassifier:
             "status":      status,
             "confidence":  confidence,
             "reason":      reason,
-            "model_used":  "rule_based_v1",
+            "model_used":  f"rule_based_v1 + {gas_model_used}",
             "pillar_scores": {
                 "rgb_surface": round(p1_score, 3),
                 "uv_fluorescence": round(p2_score, 3),
@@ -422,7 +528,12 @@ class AIClassifier:
             "agg_features": agg,
         }
 
-    def _neural_classify(self, rgb_images, uv_images, gas_delta, rot_suspicion, gas_ratio_pct=0.0, gas_slope_per_sec=0.0, produce_name="default") -> dict:
+    def _neural_classify(
+        self, rgb_images, uv_images, gas_delta, rot_suspicion,
+        gas_ratio_pct=0.0, gas_slope_per_sec=0.0, produce_name="default",
+        gas_min_kohms=0.0, gas_mean_kohms=0.0, gas_std_kohms=0.0,
+        temperature_c=0.0, humidity_pct=0.0
+    ) -> dict:
         """
         Dual-model ONNX classification (Pillar 1 = RGB model, Pillar 2 = UV model).
 
@@ -482,8 +593,25 @@ class AIClassifier:
                 p2_score  = agg["uv_fluorescence_score"]
             p2_source = "uv_rule_based"
 
-        # ── Pillar 3: BME688 gas — enhanced multi-feature analytics ───────────
-        p3_score = self._gas_score(gas_delta, gas_ratio_pct, gas_slope_per_sec, produce_name)
+        # ── Pillar 3: BME688 gas — Trained Random Forest ML (.pkl) or Gas Rules ──
+        ml_status, ml_rot_score, bme_tag = self._predict_gas_model(
+            produce_name=produce_name,
+            gas_delta=gas_delta,
+            gas_ratio_pct=gas_ratio_pct,
+            gas_slope_per_sec=gas_slope_per_sec,
+            gas_min_kohms=gas_min_kohms,
+            gas_mean_kohms=gas_mean_kohms,
+            gas_std_kohms=gas_std_kohms,
+            temperature_c=temperature_c,
+            humidity_pct=humidity_pct,
+        )
+
+        if ml_rot_score is not None:
+            p3_score = ml_rot_score
+            p3_source = bme_tag
+        else:
+            p3_score = self._gas_score(gas_delta, gas_ratio_pct, gas_slope_per_sec, produce_name)
+            p3_source = "gas_rules"
 
         # ── Weighted fusion ───────────────────────────────────────────────────
         fused = p1_score * 0.40 + p2_score * 0.35 + p3_score * 0.25

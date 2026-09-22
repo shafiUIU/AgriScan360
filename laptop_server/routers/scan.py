@@ -147,6 +147,11 @@ async def ingest_scan(
             gas_ratio_pct     = gas_ratio_pct,
             gas_slope_per_sec = gas_slope_per_sec,
             produce_name      = scan.produce_name,
+            gas_min_kohms     = gas_min_kohms,
+            gas_mean_kohms    = gas_mean_kohms,
+            gas_std_kohms     = gas_std_kohms,
+            temperature_c     = temperature_c,
+            humidity_pct      = humidity_pct,
         )
     except Exception as exc:
         log.error("AI classification error: %s", exc)

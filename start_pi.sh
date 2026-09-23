@@ -1,30 +1,44 @@
 #!/bin/bash
-# ============================================================
-#  AgriScan 360 — Raspberry Pi 5 Scan Launcher
-#  Run this on the RASPBERRY PI to start scanning.
-# ============================================================
+# =============================================================================
+# AgriScan 360 -- Raspberry Pi 5 Client Launcher
+# =============================================================================
+# Run this on your Raspberry Pi 5 terminal to start scanning:
+#   chmod +x start_pi.sh
+#   ./start_pi.sh
+# =============================================================================
 
-echo ""
-echo " ╔══════════════════════════════════════════════╗"
-echo " ║     AgriScan 360 — Pi Scan Client            ║"
-echo " ║     UIU CSE 4326  -  Stage 1                 ║"
-echo " ╚══════════════════════════════════════════════╝"
-echo ""
+set -e
 
-# Navigate to pi_client folder
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-cd "$SCRIPT_DIR/pi_client" || exit 1
+cd "$SCRIPT_DIR"
 
-# Show Pi's IP so you can verify it's on same network
-echo "Pi network IP:"
-hostname -I
+echo ""
+echo "+----------------------------------------------------------+"
+echo "|         AgriScan 360 -- Raspberry Pi Client              |"
+echo "+----------------------------------------------------------+"
 echo ""
 
-# Install dependencies if first run (uncomment if needed):
-# pip install -r requirements_pi.txt
+# 1. Activate venv if present
+if [ -d "venv" ]; then
+    echo "[AgriScan] Activating virtual environment (venv)..."
+    source venv/bin/activate
+elif [ -d "../venv" ]; then
+    echo "[AgriScan] Activating virtual environment (../venv)..."
+    source ../venv/bin/activate
+else
+    echo "[AgriScan] Warning: No virtual environment found. Running with system python."
+    echo "           (Tip: Run ./setup_pi_venv.sh once to set up venv)"
+fi
 
-echo "Starting AgriScan 360 Pi client..."
+# 2. Show Pi IP
+echo "Pi Network IP Address:"
+hostname -I || true
+echo ""
+
+# 3. Launch main orchestrator
+cd "$SCRIPT_DIR/pi_client"
+echo "Starting AgriScan 360 client..."
 echo "Press Ctrl+C to stop."
 echo ""
 
-python main.py "$@"
+python3 main.py "$@"

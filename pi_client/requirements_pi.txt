@@ -1,25 +1,35 @@
 # =============================================================================
-# Raspberry Pi 5 — AgriScan 360 Client Dependencies
+# AgriScan 360 -- Raspberry Pi 5 Client Dependencies (Lightweight Edge Mode)
 # =============================================================================
-# Install on Pi inside venv:  pip install -r requirements_pi.txt
+# All heavy model training (PyTorch, CUDA, TorchVision) is executed on the laptop.
+# The Raspberry Pi 5 runs ONLY hardware orchestration, image capture, BME688
+# sensor sniffing, and telemetry streaming to the laptop server.
+#
+# On Raspberry Pi (OS Bookworm), create venv with system packages:
+#   python3 -m venv --system-site-packages venv
+#   source venv/bin/activate
+#   pip install -r pi_client/requirements_pi.txt
+# =============================================================================
 
-# GPIO & Stepper Motor / MOSFET Control
+# GPIO, Stepper Motor (A4988) & Dual MOSFET Lighting (IRLZ44N)
 gpiozero>=2.0
 lgpio>=0.2.2.0; sys_platform == "linux"
 
-# Gas Sensor (BME688)
+# Gas Sensor (Bosch BME688 MOX E-Nose)
 bme680>=1.1.1
 smbus2>=0.4.3
 
-# OLED Display (SSD1306 0.96" I2C)
+# OLED Display (SSD1306 0.96 inch I2C)
 luma.oled>=3.13.0
 luma.core>=2.4.2
 
-# Image Processing & Produce Auto-Detection
+# Image Processing & Buffer Handling (picamera2 is provided via system-site-packages)
 Pillow>=10.0.0
 
-# HTTP Client (Pi to Laptop Server communication)
-requests>=2.31.0
-
-# Utilities
+# Telemetry Data Handling & Logging
+numpy>=1.24.0
+pandas>=2.0.0
 python-dateutil>=2.8.2
+
+# HTTP Client (Streams 16 images + gas telemetry payload to Laptop Server)
+requests>=2.31.0

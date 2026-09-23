@@ -1,9 +1,20 @@
-# AgriScan 360 - Python Dependencies
-# Install via terminal: pip install -r requirements.txt --break-system-packages
+# =============================================================================
+# AgriScan 360 -- Master Project Dependencies Guide
+# =============================================================================
+# This project uses a distributed architecture (Raspberry Pi 5 + Laptop Server).
+# Install the appropriate requirements file based on the machine:
+#
+# 1. RASPBERRY PI 5 (Edge Hardware Controller: Motors, LEDs, Camera, BME688):
+#      python3 -m venv --system-site-packages venv
+#      source venv/bin/activate
+#      pip install -r pi_client/requirements_pi.txt
+#
+# 2. LAPTOP SERVER (FastAPI, Web Dashboard, AI Inference Engine):
+#      pip install -r laptop_server/requirements_laptop.txt
+#
+# 3. LAPTOP GPU TRAINING (PyTorch Deep Learning with RTX 4060 CUDA):
+#      pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+#      pip install -r training/vision_classifier/requirements.txt
+# =============================================================================
 
-bme680>=1.1.1
-smbus2>=0.4.3
-Flask>=2.3.0
-Pillow>=9.0.0
-adafruit-circuitpython-ssd1306>=2.12.14
-gpiozero>=2.0
+-r pi_client/requirements_pi.txt

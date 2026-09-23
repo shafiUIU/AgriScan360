@@ -29,7 +29,7 @@ sudo apt-get install -y \
     i2c-tools \
     libjpeg-dev \
     zlib1g-dev \
-    libatlas-base-dev
+    libopenblas-dev
 
 # 2. Enable I2C interface if not already active
 echo "[2/4] Ensuring I2C bus is enabled..."

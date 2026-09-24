@@ -1,5 +1,5 @@
 """
-database.py — SQLAlchemy SQLite Engine & Session Management
+database.py -- SQLAlchemy SQLite Engine & Session Management
 ============================================================
 """
 
@@ -41,7 +41,7 @@ def get_db():
 
 def create_all_tables():
     """Create all ORM-defined tables. Called once at server startup with auto-migration for SQLite."""
-    from models import Scan, ScanImage   # noqa: F401 — must import to register
+    from models import Scan, ScanImage   # noqa: F401 -- must import to register
     Base.metadata.create_all(bind=engine)
 
     # Ensure existing SQLite tables are upgraded with any newly added analytics columns
@@ -51,6 +51,7 @@ def create_all_tables():
             existing_cols = {row[1] for row in cursor.fetchall()}
             
             new_cols = {
+                "ground_truth": "VARCHAR(32)",
                 "baseline_gas_kohms": "FLOAT",
                 "post_scan_gas_kohms": "FLOAT",
                 "gas_min_kohms": "FLOAT",

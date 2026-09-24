@@ -1,5 +1,5 @@
 """
-routers/scan.py — POST /api/scan  (Core Scan Ingestion Endpoint)
+routers/scan.py   POST /api/scan  (Core Scan Ingestion Endpoint)
 =================================================================
 Receives multipart form from Raspberry Pi containing:
     - 16 JPEG images (8 RGB + 8 UV)
@@ -57,7 +57,7 @@ async def ingest_scan(
 ):
     """
     Main scan ingestion endpoint.
-    Called by the Raspberry Pi after completing the 8-stop 360° scan.
+    Called by the Raspberry Pi after completing the 8-stop 360  scan.
     """
     t_start = time.time()
     log.info("Received scan: produce=%s, %d images, gas_delta=%.2f kOhm, drop=%.1f%%, slope=%.4f",
@@ -66,7 +66,7 @@ async def ingest_scan(
     if len(images) < 2:
         raise HTTPException(status_code=422, detail="At least 2 images required (1 RGB + 1 UV)")
 
-    # ── 1. Create pending Scan record ──────────────────────────────────────────
+    #    1. Create pending Scan record                                           
     scan = Scan(
         produce_name        = produce_name.strip().title() or "Unknown",
         status              = "PENDING",
@@ -90,7 +90,7 @@ async def ingest_scan(
     db.refresh(scan)
     scan_id = scan.id
 
-    # ── 2. Save images to disk & DB ────────────────────────────────────────────
+    #    2. Save images to disk & DB                                             
     import re
     safe_produce = re.sub(r'[<>:"/\\|?*]', '_', scan.produce_name).strip() or "Produce"
     folder_name = f"{scan_id}. {safe_produce}"
@@ -136,7 +136,7 @@ async def ingest_scan(
 
     db.commit()
 
-    # ── 3. Run AI Classification ───────────────────────────────────────────────
+    #    3. Run AI Classification                                                
     try:
         classifier = get_classifier()
         ai_result  = classifier.classify(
@@ -162,7 +162,7 @@ async def ingest_scan(
             "model_used": "error",
         }
 
-    # ── 4. Update Scan record with result ─────────────────────────────────────
+    #    4. Update Scan record with result                                      
     scan.status       = ai_result["status"]
     scan.confidence   = ai_result["confidence"]
     scan.reason       = ai_result.get("reason", "")
@@ -172,7 +172,7 @@ async def ingest_scan(
     db.commit()
     db.refresh(scan)
 
-    # ── 5. Push WebSocket live event ──────────────────────────────────────────
+    #    5. Push WebSocket live event                                           
     ws_payload = {
         "event":             "scan_complete",
         "scan_id":           scan_id,

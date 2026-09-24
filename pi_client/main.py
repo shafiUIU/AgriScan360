@@ -67,7 +67,7 @@ import config as cfg
 from config     import SUPPORTED_PRODUCE, NUM_SCAN_STOPS, CHAMBER_VOLUME_LITERS
 
 try:
-    from PIL import Image
+    from PIL import Image, ImageOps
     PIL_AVAILABLE = True
 except ImportError:
     PIL_AVAILABLE = False
@@ -137,16 +137,29 @@ def _classify_image_bytes(img_bytes: bytes):
         return None, 0
 
     try:
-        img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-        w, h = img.size
-        # Centre 40% region
-        margin_w, margin_h = w // 5, h // 5
-        region = img.crop((
-            max(0, w // 2 - margin_w),
-            max(0, h // 2 - margin_h),
-            min(w, w // 2 + margin_w),
-            min(h, h // 2 + margin_h),
-        ))
+        # Save snapshot to disk for debugging / inspection
+        try:
+            with open("last_detect.jpg", "wb") as f:
+                f.write(img_bytes)
+        except Exception:
+            pass
+
+        raw_img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+        w, h = raw_img.size
+
+        # Dynamic histogram stretch to handle dim 3.7V LED illumination
+        try:
+            img = ImageOps.autocontrast(raw_img, cutoff=1)
+        except Exception:
+            img = raw_img
+
+        # Crop central 60% region (covers turntable even if fruit rolls off-center)
+        margin_w = int(w * 0.20)
+        margin_h = int(h * 0.20)
+        region = img.crop((margin_w, margin_h, w - margin_w, h - margin_h))
+
+        # Downsample for fast and noise-smoothed pixel voting
+        region = region.resize((160, 120), Image.Resampling.BILINEAR if hasattr(Image, "Resampling") else Image.BILINEAR)
         pixels = list(region.getdata())
         n = len(pixels)
         if n == 0:
@@ -165,44 +178,41 @@ def _classify_image_bytes(img_bytes: bytes):
             hf, sf, vf = colorsys.rgb_to_hsv(r / 255.0, g / 255.0, b / 255.0)
             hue_deg = hf * 360.0
 
-            # 1. Neutral shadow / dark background check (low saturation, dark)
-            is_neutral_dark = (vf < 0.30 and sf < 0.20) or (vf < 0.12)
-            if is_neutral_dark:
+            # 1. Background & Deep Shadow rejection:
+            is_dark_bg = (vf < 0.12) or (vf < 0.22 and sf < 0.14)
+            if is_dark_bg:
                 neutral_dark_count += 1
                 continue
 
-            # 2. Eggplant signature:
-            # Deep violet/purple hue (240 - 335 deg) with visible saturation,
-            # OR dark purple where Red and Blue are both significantly higher than Green
-            is_purple_hue = (240 <= hue_deg <= 335) and (sf >= 0.18)
-            is_dark_purple = (vf < 0.45) and (sf >= 0.15) and (r > g + 8) and (b > g + 4)
-            if is_purple_hue or is_dark_purple:
+            # 2. Eggplant (Purple / Violet):
+            is_purple_hue = (235 <= hue_deg <= 335) and (sf >= 0.14)
+            is_rgb_purple = (r > g + 4) and (b > g + 2) and (r >= 20 or b >= 20) and (sf >= 0.12)
+            if is_purple_hue or is_rgb_purple:
                 eggplant_purple_count += 1
                 continue
 
-            # 3. Green Apple signature:
-            # Green hue (75 - 155 deg) with decent saturation and brightness
-            if (75 <= hue_deg <= 155) and (sf >= 0.22) and (vf >= 0.20):
+            # 3. Green Apple:
+            if (70 <= hue_deg <= 160) and (sf >= 0.15) and (vf >= 0.14):
                 apple_green_count += 1
                 continue
 
-            # 4. Yellow / Yellow-Green Apple signature (Gala / Golden Delicious / Apple undertones)
-            if (40 <= hue_deg < 75) and (sf >= 0.25) and (vf >= 0.30):
+            # 4. Yellow / Golden Apple:
+            if (35 <= hue_deg < 70) and (sf >= 0.18) and (vf >= 0.18):
                 apple_yellow_count += 1
                 continue
 
             # 5. Red pixels (Tomato vs Red Apple):
-            if ((hue_deg <= 30) or (hue_deg >= 335)) and (sf >= 0.28) and (vf >= 0.18):
+            if ((hue_deg <= 30) or (hue_deg >= 335)) and (sf >= 0.20) and (vf >= 0.14):
                 g_r = g / max(1, r)
                 red_pixel_g_r_ratios.append(g_r)
-                if g_r > 0.36:
+                if g_r > 0.38:
                     red_apple_count += 1
                 else:
                     tomato_red_count += 1
                 continue
 
-            # 6. Blue / Cyan (definitely non-produce)
-            if (160 <= hue_deg <= 245) and (sf >= 0.25):
+            # 6. Blue / Cyan (non-produce reject)
+            if (165 <= hue_deg <= 235) and (sf >= 0.30):
                 blue_cyan_count += 1
                 continue
 
@@ -213,40 +223,53 @@ def _classify_image_bytes(img_bytes: bytes):
         blue_pct   = (blue_cyan_count / n) * 100.0
         dark_pct   = (neutral_dark_count / n) * 100.0
 
-        log.info(
-            "Detect snapshot analysis -- purple=%.1f%% red=%.1f%% green=%.1f%% yellow=%.1f%% blue=%.1f%% dark=%.1f%%",
-            purple_pct, red_pct, green_pct, yellow_pct, blue_pct, dark_pct,
-        )
+        total_chromatic = eggplant_purple_count + tomato_red_count + red_apple_count + apple_green_count + apple_yellow_count
+        chromatic_pct = (total_chromatic / n) * 100.0
 
-        # Non-produce veto: If significant blue/cyan pixels exist, it cannot be our target produce
-        if blue_pct >= 15.0:
-            log.info("Non-produce blue/cyan pixels detected (%.1f%%) -- rejecting object.", blue_pct)
+        log.info(
+            "Detect snapshot analysis -- chromatic=%.1f%% (red=%.1f%% green=%.1f%% yellow=%.1f%% purple=%.1f%% blue=%.1f%% dark=%.1f%%)",
+            chromatic_pct, red_pct, green_pct, yellow_pct, purple_pct, blue_pct, dark_pct,
+        )
+        print(f"    [Camera Analysis: Red={red_pct:.1f}% | Green/Yellow={green_pct + yellow_pct:.1f}% | Purple={purple_pct:.1f}%]")
+
+        # Non-produce veto: If strong blue/cyan presence dominates
+        if blue_pct >= 20.0 and blue_pct > chromatic_pct:
+            log.info("Non-produce blue/cyan pixels dominant (%.1f%%) -- rejecting object.", blue_pct)
             return None, 0
 
-        # Decision tree:
-        # A. Eggplant
-        if purple_pct >= 20.0:
-            conf = int(min(purple_pct * 2.5, 95))
-            return "Eggplant", conf
+        # If practically no chromatic pixels exist (< 3.0%), chamber is truly empty or object has no color
+        if chromatic_pct < 3.0:
+            log.info("Insufficient chromatic pixels (%.1f%%) -- no recognizable produce found.", chromatic_pct)
+            return None, 0
 
-        # B. Green/Yellow Apple
-        if green_pct >= 18.0 or (green_pct + yellow_pct >= 22.0):
-            conf = int(min((green_pct + yellow_pct) * 2.2, 95))
-            return "Apple", conf
+        # Calculate votes among chromatic pixels
+        score_tomato   = tomato_red_count
+        score_apple    = red_apple_count + apple_green_count + apple_yellow_count
+        score_eggplant = eggplant_purple_count
 
-        # C. Red Produce: Tomato vs Red Apple
-        if red_pct >= 20.0:
+        scores = {
+            "Tomato": score_tomato,
+            "Apple": score_apple,
+            "Eggplant": score_eggplant,
+        }
+        winner = max(scores, key=scores.get)
+        winner_score = scores[winner]
+
+        if winner_score == 0:
+            return None, 0
+
+        # Confidence based on dominance of the winning category
+        dominance_ratio = winner_score / max(1, total_chromatic)
+        conf = int(min(96, max(60, dominance_ratio * 100.0)))
+
+        # Specific tie-breaking / validation:
+        if winner == "Tomato" and (yellow_pct + green_pct >= 6.0):
+            # Apple undertones present
             mean_gr = sum(red_pixel_g_r_ratios) / len(red_pixel_g_r_ratios) if red_pixel_g_r_ratios else 0.0
-            # Red Apple features yellow/green undertones or higher G/R ratio
-            if (yellow_pct + green_pct >= 8.0) or (mean_gr > 0.36):
-                conf = int(min(red_pct * 2.0, 92))
-                return "Apple", conf
-            else:
-                conf = int(min(red_pct * 2.2, 96))
-                return "Tomato", conf
+            if mean_gr > 0.38:
+                return "Apple", max(65, conf)
 
-        # If no produce matched dominant criteria (e.g. random neutral or unrecognised object)
-        return None, 0
+        return winner, conf
 
     except Exception as exc:
         log.warning("Produce detection image analysis failed: %s", exc)
@@ -257,7 +280,7 @@ def detect_produce(camera: "CameraController", lights: "LightController"):
     """
     Take a single detection snapshot and auto-classify the produce on the turntable.
 
-    MOSFET mode: White LED turns ON briefly (0.5s), snap, OFF.
+    MOSFET mode: White LED turns ON briefly (1.5s for camera AEC/AWB warmup), snap, OFF.
     Manual mode: Prompt operator to turn White LED ON, press Enter, snap.
 
     Returns (produce_name: str | None, confidence_pct: int)
@@ -274,7 +297,7 @@ def detect_produce(camera: "CameraController", lights: "LightController"):
         if lights._uv_dev:
             lights._uv_dev.off()
         lights._white_dev.on()
-        time.sleep(0.5)   # Short warmup for detection only (not the full 5s scan hold)
+        time.sleep(1.5)   # 1.5s warmup allows Pi Camera AEC & AWB to adapt from darkness
         img_bytes = camera.capture_jpeg()
         lights._white_dev.off()
     elif lights.mode == "manual":

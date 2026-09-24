@@ -8,8 +8,8 @@ Wiring:
     Orange / Yellow Wire-> GPIO 23 (Physical Pin 16)
 
 Configured Door Logic:
-    Starting Position = 180 Degree -> Door CLOSED
-    Ending Position   = 90 Degree  -> Door OPEN
+    Starting Position = 0 Degree  -> Door CLOSED
+    Ending Position   = 90 Degree -> Door OPEN
     Open Duration     = 2.0 Seconds
 """
 
@@ -31,7 +31,7 @@ MIN_PULSE_WIDTH = 0.0005
 MAX_PULSE_WIDTH = 0.0024
 
 # Exact Door Positions and Timing
-DOOR_CLOSED_ANGLE = 180
+DOOR_CLOSED_ANGLE = 0
 DOOR_OPEN_ANGLE = 90
 DOOR_OPEN_DURATION = 2.0
 
@@ -66,10 +66,10 @@ def move_and_relax(servo, angle, hold_time=0.8):
 def test_feed_drop(servo, closed_angle=DOOR_CLOSED_ANGLE, open_angle=DOOR_OPEN_ANGLE, open_time=DOOR_OPEN_DURATION):
     """
     Simulates real item drop sequence:
-      1. Starting at 180 deg (CLOSED)
+      1. Starting at 0 deg (CLOSED)
       2. Open door to 90 deg (OPEN)
       3. Hold open for 2.0 seconds
-      4. Close door back to 180 deg (CLOSED)
+      4. Close door back to 0 deg (CLOSED)
     """
     print(f"\n--- Testing Feed Drop Sequence ({open_time}s duration) ---")
     print(f"1. Opening door to {open_angle} deg...")
@@ -81,7 +81,7 @@ def test_feed_drop(servo, closed_angle=DOOR_CLOSED_ANGLE, open_angle=DOOR_OPEN_A
 
 
 def test_sweep(servo, start_angle=DOOR_CLOSED_ANGLE, end_angle=DOOR_OPEN_ANGLE):
-    """Slowly sweeps between closed (180 deg) and open (90 deg)."""
+    """Slowly sweeps between closed (0 deg) and open (90 deg)."""
     print(f"\n--- Sweeping {start_angle} deg <-> {end_angle} deg ---")
     if servo is None:
         print(f"[Simulated] Sweeping {start_angle} -> {end_angle} -> {start_angle}...")
@@ -110,16 +110,16 @@ def main():
 
     servo = get_servo()
 
-    # Default to closed position (180 deg) on start
+    # Default to closed position (0 deg) on start
     print(f"Setting initial state: CLOSED ({DOOR_CLOSED_ANGLE} deg)...")
     move_and_relax(servo, DOOR_CLOSED_ANGLE, hold_time=0.8)
 
     while True:
         print("\n+-- SG90 Door Servo Menu ---------------------------+")
-        print(f"|  1. CLOSE Door ({DOOR_CLOSED_ANGLE} deg)                            |")
+        print(f"|  1. CLOSE Door ({DOOR_CLOSED_ANGLE} deg)                              |")
         print(f"|  2. OPEN Door ({DOOR_OPEN_ANGLE} deg)                              |")
-        print(f"|  3. Simulate Produce Drop (90 deg -> 2s -> 180 deg)|")
-        print(f"|  4. Sweep Test (180 deg <-> 90 deg)               |")
+        print(f"|  3. Simulate Produce Drop (0 deg -> 90 deg -> 2s -> 0 deg)|")
+        print(f"|  4. Sweep Test (0 deg <-> 90 deg)                 |")
         print(f"|  5. Set Custom Angle (0 - 180)                    |")
         print(f"|  0. Exit                                          |")
         print("+---------------------------------------------------+")
@@ -156,7 +156,7 @@ def main():
         else:
             print("Invalid option. Enter 0-5.")
 
-    # Always ensure door is closed at 180 deg on exit
+    # Always ensure door is closed at 0 deg on exit
     print(f"Ensuring door is closed ({DOOR_CLOSED_ANGLE} deg) on exit...")
     move_and_relax(servo, DOOR_CLOSED_ANGLE, hold_time=0.5)
     print("Test finished.")

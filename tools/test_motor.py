@@ -170,20 +170,23 @@ def print_wiring_reference():
 
 
 def test_door_servo():
-    """Tests the SG90 micro servo door (Closed 180 deg -> Open 90 deg -> 2s -> Closed 180 deg)."""
+    """Tests the SG90 micro servo door (Closed 0 deg -> Open 90 deg -> 2s -> Closed 0 deg)."""
     try:
         from gpiozero import AngularServo
         print("\n--- TEST 7: SG90 Pipe Door Servo (GPIO 23) ---")
         servo = AngularServo(23, min_angle=0, max_angle=180, min_pulse_width=0.0005, max_pulse_width=0.0024)
-        print("1. Opening door to 90 deg (OPEN)...")
+        print("1. Starting at 0 deg (CLOSED)...")
+        servo.angle = 0
+        time.sleep(0.5)
+        print("2. Opening door to 90 deg (OPEN)...")
         servo.angle = 90
         time.sleep(2.0)
         print("   -> Door held open for 2 seconds.")
-        print("2. Closing door back to 180 deg (CLOSED)...")
-        servo.angle = 180
+        print("3. Closing door back to 0 deg (CLOSED)...")
+        servo.angle = 0
         time.sleep(0.8)
         servo.value = None
-        print("   -> Door is now CLOSED (180 deg).\n")
+        print("   -> Door is now CLOSED (0 deg).\n")
     except Exception as exc:
         print(f"Servo test error: {exc}")
 
@@ -205,7 +208,7 @@ def main():
         print("|  4. 200 Steps (Full 360 Degree Revolution)       |")
         print("|  5. Continuous Rotation (Speed / Stall Test)     |")
         print("|  6. Print Wiring Diagram & Troubleshooting Guide |")
-        print("|  7. Test SG90 Pipe Door (Open 90 deg -> 2s -> 180)|")
+        print("|  7. Test SG90 Pipe Door (0 deg -> 90 deg -> 2s -> 0)|")
         print("|  0. Exit                                         |")
         print("+---------------------------------------------------+")
 

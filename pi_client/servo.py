@@ -8,8 +8,8 @@ Wiring:
     Orange / Yellow     -> GPIO 23 (Physical Pin 16)
 
 Door Logic:
-    CLOSED = 0 deg    (pipe sealed, nothing drops through)
-    OPEN   = 90 deg   (pipe open, produce slides onto turntable)
+    CLOSED = 90 deg   (pipe sealed, nothing drops through)
+    OPEN   = 180 deg  (pipe open, produce slides onto turntable)
     Duration = 2.0 seconds (time held open for item to drop)
 """
 
@@ -29,8 +29,8 @@ except ImportError:
 from config import PIN_SERVO
 
 # Configured door angles (degrees)
-_CLOSED_ANGLE   = 0
-_OPEN_ANGLE     = 90
+_CLOSED_ANGLE   = 90
+_OPEN_ANGLE     = 180
 _OPEN_DURATION  = 2.0   # seconds to hold door open
 
 # Standard SG90 pulse widths
@@ -44,7 +44,7 @@ class PipeDoor:
 
     Usage:
         door = PipeDoor(simulate=False)
-        door.drop_item()   # opens to 90 deg for 2s, then closes to 0 deg
+        door.drop_item()   # opens to 180 deg for 2s, then closes to 90 deg
         door.close()       # explicit close
         door.cleanup()     # release PWM
     """
@@ -90,21 +90,21 @@ class PipeDoor:
             log.error("PipeDoor move error: %s", exc)
 
     def open(self):
-        """Open the pipe door to 90 deg."""
+        """Open the pipe door to 180 deg."""
         log.info("PipeDoor: OPENING to %d deg", _OPEN_ANGLE)
         self._move(_OPEN_ANGLE, hold=0.3)   # Just move, don't block
 
     def close(self):
-        """Close the pipe door to 0 deg."""
+        """Close the pipe door to 90 deg."""
         log.info("PipeDoor: CLOSING to %d deg", _CLOSED_ANGLE)
         self._move(_CLOSED_ANGLE, hold=0.6)
 
     def drop_item(self):
         """
         Full drop sequence:
-          1. Open door to 90 deg
+          1. Open door to 180 deg
           2. Hold open for 2.0 seconds (item slides through pipe onto turntable)
-          3. Close door to 0 deg
+          3. Close door to 90 deg
 
         Blocks for approximately OPEN_DURATION + settle time (~2.8s total).
         """

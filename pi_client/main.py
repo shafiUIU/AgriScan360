@@ -426,9 +426,9 @@ def run_scan(motor:   "StepperMotor",
 
         # --- Pipe door drop sequence ---
         display.show_item_detected("Dropping...")
-        print("[>] Opening pipe door (90 deg)...")
-        door.drop_item()   # Opens to 90 deg, holds 2s, closes to 0 deg
-        print("[>] Pipe door closed (0 deg). Item is now on the turntable.")
+        print("[>] Opening pipe door (180 deg)...")
+        door.drop_item()   # Opens to 180 deg, holds 2s, closes to 90 deg
+        print("[>] Pipe door closed (90 deg). Item is now on the turntable.")
 
         # --- Ask operator to close the box lid ---
         print("\n[>] Close the box lid tightly.")

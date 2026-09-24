@@ -19,7 +19,16 @@ laptop_server/db/*.db-wal
 # ── Scan images (can be hundreds of MBs) ──────────────────────────────────────
 laptop_server/static/scans/
 
-# ── AI model files (large binary) ─────────────────────────────────────────────
+# -- AI model files & checkpoints (large binary) -------------------------------
+*.pth
+*.pt
+*.tflite
+checkpoints/
+**/checkpoints/
+training/**/checkpoints/
+training/**/results/
+laptop_server/models/*.onnx
+laptop_server/models/*.pkl
 laptop_server/model/*.onnx
 laptop_server/model/*.pt
 laptop_server/model/*.tflite

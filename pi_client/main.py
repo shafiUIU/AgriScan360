@@ -336,8 +336,9 @@ def run_scan(motor:   "StepperMotor",
             pass
 
         display.show_bme_sniffing_empty()
-        sniff_time = getattr(cfg, "GAS_EMPTY_BOX_SNIFF_SEC", 60)
-        print(f"\n[>] BME688: Pre-heating hotplate twice & sniffing empty box for {sniff_time}s (1 min)...")
+        sniff_time = getattr(cfg, "GAS_EMPTY_BOX_SNIFF_SEC", 180)
+        print(f"\n[>] BME688: Pre-heating hotplate thrice & sniffing empty box for {sniff_time}s ({sniff_time // 60} min)...")
+        print("[>] (First 2 minutes are discarded for thermal stabilization; last 5s are averaged)")
         print("[>] Keep the box closed and EMPTY.")
 
         def _baseline_progress(elapsed, remaining, reading):
@@ -493,8 +494,8 @@ def run_scan(motor:   "StepperMotor",
     # Pre-scan incubation with live progress feedback
     if cfg.GAS_PRE_SCAN_INCUBATION_SEC > 0:
         inc_total = cfg.GAS_PRE_SCAN_INCUBATION_SEC
-        print(f"\n[>] Chamber Sealed: Incubating for {inc_total}s (5 min) to accumulate VOCs...")
-        print(f"[>] Sniffing active in background (interval: {cfg.GAS_SNIFF_INTERVAL_SEC}s).")
+        print(f"\n[>] Chamber Sealed: Incubating for {inc_total}s ({inc_total // 60} min) to accumulate VOCs...")
+        print(f"[>] (First 2 minutes are discarded for thermal stabilization; interval: {cfg.GAS_SNIFF_INTERVAL_SEC}s).")
         t_inc_start = time.time()
         try:
             while True:

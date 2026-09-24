@@ -31,6 +31,7 @@ except ImportError:
 
 from config import (
     BME688_I2C_ADDRESSES,
+    BME_WARMUP_DISCARD_SEC,
     GAS_EMPTY_BOX_SNIFF_SEC,
     GAS_BASELINE_READS, GAS_BASELINE_DELAY,
     GAS_SNIFF_INTERVAL_SEC, GAS_DELTA_THRESHOLD,
@@ -209,6 +210,7 @@ class GasSensor:
                 self._sensor.select_gas_heater_profile(0)
                 self.installed = True
                 log.info("BME688 detected and initialized successfully at I2C address 0x%02X (27L box mode)", addr)
+                self.heatup_thrice()
                 return
             except Exception:
                 continue
@@ -257,41 +259,46 @@ class GasSensor:
         )
 
     #    Hotplate Pre-Heat & Baseline Calibration                               
-    def heatup_twice(self):
+    def heatup_thrice(self):
         """
-        Pre-heats the BME688 hotplate twice in rapid succession at 320C:
-          - Pulse 1: Burns off accumulated surface moisture and stale VOCs from when the box was open.
-          - Pulse 2: Thermal stabilization pulse to reach equilibrium and lock in heat_stable quickly,
-                     saving minutes of warm-up drift time.
+        Pre-heats the BME688 hotplate THREE times in rapid succession at 320C:
+          - Cycle 1: Surface Desorption (clears condensation and surface moisture)
+          - Cycle 2: Core Thermalization (deeply conditions the MOX semiconductor layer)
+          - Cycle 3: Equilibrium Lock-in (locks in thermal stability, minimizing baseline drift)
+        Uses optimized 30ms polling for maximum speed and responsiveness.
         """
         if self.simulate or not self.installed or not self._sensor:
-            log.info("[Simulated] BME688 hotplate dual pre-heat complete (2 cycles).")
+            log.info("[Simulated] BME688 hotplate triple pre-heat complete (3 cycles).")
             return
 
-        log.info("BME688: Starting dual hotplate pre-heat sequence (2 cycles at 320C)...")
-        for cycle in (1, 2):
-            label = "Burn-off" if cycle == 1 else "Thermal Stabilization"
-            log.info("  -> Heat-up cycle %d/2 (%s pulse)...", cycle, label)
-            for attempt in range(15):
+        labels = ["Surface Desorption", "Core Thermalization", "Equilibrium Lock-in"]
+        log.info("BME688: Starting triple hotplate pre-heat sequence (3 cycles at 320C)...")
+        for cycle in range(1, 4):
+            label = labels[cycle - 1]
+            log.info("  -> Heat-up cycle %d/3 (%s pulse)...", cycle, label)
+            for attempt in range(12):
                 if self._sensor.get_sensor_data() and getattr(self._sensor.data, 'heat_stable', False):
                     res_k = getattr(self._sensor.data, 'gas_resistance', 0.0) / 1000.0
                     log.info("     Cycle %d heat stable (gas: %.1f kOhm)", cycle, res_k)
                     break
-                time.sleep(0.1)
-            time.sleep(0.2)
-        log.info("BME688: Dual heat-up complete. Sensor hotplate is conditioned and ready.")
+                time.sleep(0.03)  # Fast 30ms polling to avoid slow lag
+            time.sleep(0.04)
+        log.info("BME688: Triple heat-up complete. Sensor hotplate is fully conditioned and ready.")
+
+    # Backwards-compatible alias
+    heatup_twice = heatup_thrice
 
     def calibrate_baseline(self, duration_sec: int = GAS_EMPTY_BOX_SNIFF_SEC, progress_cb=None) -> GasReading:
         """
-        Read baseline gas resistance inside the empty 27L chamber over duration_sec (default 60s / 1 min).
-        Executes a dual hotplate pre-heat first to burn off contaminants and save stabilization time.
+        Read baseline gas resistance inside the empty 27L chamber over duration_sec (default 180s / 3 min).
+        Executes a triple hotplate pre-heat first to burn off contaminants and save stabilization time.
         """
         if not self.installed:
             self._baseline = GasReading(timestamp=time.time())
             return self._baseline
 
-        # Heat up BME twice to stabilize quickly and burn off contaminants
-        self.heatup_twice()
+        # Heat up BME thrice to stabilize quickly and burn off contaminants
+        self.heatup_thrice()
 
         log.info("Calibrating BME688 baseline inside empty 27L chamber (%ds sniff)...", duration_sec)
         readings = []
@@ -313,11 +320,21 @@ class GasSensor:
         if not readings:
             readings = [self._read_once()]
 
+        # Discard the first 2 minutes (BME_WARMUP_DISCARD_SEC) of warm-up data
+        stabilized_baseline_readings = [
+            r for r in readings if (r.timestamp - t_start) >= BME_WARMUP_DISCARD_SEC
+        ]
+        if not stabilized_baseline_readings:
+            stabilized_baseline_readings = readings
+        else:
+            log.info("BME688: Discarded first %ds of warm-up data. %d stabilized baseline readings available.",
+                     BME_WARMUP_DISCARD_SEC, len(stabilized_baseline_readings))
+
         t_end = time.time()
-        # Focus strictly on the last 5 seconds of data for baseline calculation
-        last_5s_readings = [r for r in readings if r.timestamp >= (t_end - 5.0)]
+        # Focus strictly on the last 5 seconds of the stabilized window for baseline average
+        last_5s_readings = [r for r in stabilized_baseline_readings if r.timestamp >= (t_end - 5.0)]
         if len(last_5s_readings) < 3:
-            last_5s_readings = readings[-5:] if len(readings) >= 5 else readings
+            last_5s_readings = stabilized_baseline_readings[-5:] if len(stabilized_baseline_readings) >= 5 else stabilized_baseline_readings
 
         avg_temp = sum(r.temperature for r in last_5s_readings) / len(last_5s_readings)
         avg_hum  = sum(r.humidity for r in last_5s_readings) / len(last_5s_readings)
@@ -341,11 +358,15 @@ class GasSensor:
         """
         Starts a background thread that sniffs the 27L chamber continuously
         while the 8-stop / 16-capture rotation takes place.
+        Pre-heats the hotplate thrice first so readings start stable.
         """
         if not self.installed:
             return
 
+        self.heatup_thrice()
+
         self._readings = []
+        self._sniff_start_time = time.time()
         self._sniffing = True
 
         def _sniff_worker():
@@ -362,6 +383,7 @@ class GasSensor:
     def stop_continuous_sniffing(self, produce_name: str = "default") -> "ScanGasResult":
         """
         Stops the sniffing thread and computes rich multi-feature gas analytics across the 16-photo cycle.
+        Discards the first 2 minutes of warm-up data for thermal stabilization.
         Uses per-produce VOC gas profiles to classify freshness into 4 tiers:
             FRESH | MID_FRESH | MID_ROTTEN | ROTTEN
         """
@@ -406,15 +428,30 @@ class GasSensor:
             base_h = round(sum(r.humidity for r in first_n) / len(first_n), 1)
             base_p = round(sum(r.pressure for r in first_n) / len(first_n), 1)
 
-        # Post-scan = average of last 3 samples
-        last_n = self._readings[-min(3, len(self._readings)):]
+        # Discard the first 2 minutes (BME_WARMUP_DISCARD_SEC) of data for stabilization
+        start_t = getattr(self, "_sniff_start_time", 0.0)
+        stabilized_readings = [
+            r for r in self._readings
+            if (r.timestamp - start_t) >= BME_WARMUP_DISCARD_SEC
+        ]
+        if len(stabilized_readings) >= 3:
+            analysis_readings = stabilized_readings
+            log.info("BME688: Discarded first %ds of warm-up data. Analyzing %d stabilized samples.",
+                     BME_WARMUP_DISCARD_SEC, len(analysis_readings))
+        else:
+            analysis_readings = self._readings
+            log.info("BME688: Total session under %ds; using all %d samples.",
+                     BME_WARMUP_DISCARD_SEC, len(analysis_readings))
+
+        # Post-scan = average of last 3 samples from analysis_readings
+        last_n = analysis_readings[-min(3, len(analysis_readings)):]
         post_k = round(sum(r.gas_kohms for r in last_n) / len(last_n), 3)
         post_ohms = sum(r.gas_ohms for r in last_n) / len(last_n)
         delta_k = round(max(0.0, base_k - post_k), 3)
 
-        # Statistical features across ALL collected readings
-        res_list = [r.gas_kohms for r in self._readings if r.gas_kohms > 0]
-        time_list = [r.timestamp for r in self._readings if r.gas_kohms > 0]
+        # Statistical features across stabilized readings
+        res_list = [r.gas_kohms for r in analysis_readings if r.gas_kohms > 0]
+        time_list = [r.timestamp for r in analysis_readings if r.gas_kohms > 0]
 
         if not res_list:
             res_list = [post_k]

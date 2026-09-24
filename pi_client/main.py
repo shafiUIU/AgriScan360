@@ -334,9 +334,23 @@ def run_scan(motor:   "StepperMotor",
             input()
         except EOFError:
             pass
-        display.show_scanning(stop=-1)
-        gas.calibrate_baseline()
-        print(f"    -> Clean-air baseline: {gas._baseline.gas_kohms:.2f} kOhm  "
+
+        display.show_bme_sniffing_empty()
+        sniff_time = getattr(cfg, "GAS_EMPTY_BOX_SNIFF_SEC", 60)
+        print(f"\n[>] BME688: Pre-heating hotplate twice & sniffing empty box for {sniff_time}s (1 min)...")
+        print("[>] Keep the box closed and EMPTY.")
+
+        def _baseline_progress(elapsed, remaining, reading):
+            cur_k = f"{reading.gas_kohms:6.2f} kOhm" if reading.gas_kohms > 0 else "measuring..."
+            sys.stdout.write(f"\r    [Sniffing Empty Box] {elapsed:2d}s / {sniff_time}s | Gas: {cur_k} | {reading.temperature:.1f}C | {reading.humidity:.1f}%RH  ")
+            sys.stdout.flush()
+
+        try:
+            gas.calibrate_baseline(duration_sec=sniff_time, progress_cb=_baseline_progress)
+        except KeyboardInterrupt:
+            print("\n[!] Empty box sniffing interrupted by user -- using current readings.")
+
+        print(f"\n    -> Clean-air baseline (last 5s avg): {gas._baseline.gas_kohms:.2f} kOhm  "
               f"| {gas._baseline.temperature:.1f}C  "
               f"| {gas._baseline.humidity:.1f}%RH")
 
@@ -377,7 +391,8 @@ def run_scan(motor:   "StepperMotor",
         produce_name = args.produce.strip().title()
         print(f"\n[>] Produce forced via argument: {produce_name}")
 
-    while produce_name is None:
+    # Item entrance via pipe happens ONCE when entering Step B:
+    if produce_name is None:
         print(f"\n[>] STEP B: Load item into the pipe above the turntable.")
         print("[>] Press [Enter] to OPEN the pipe door (90 deg) and drop item...")
         try:
@@ -391,7 +406,7 @@ def run_scan(motor:   "StepperMotor",
         door.drop_item()   # Opens to 90 deg, holds 2s, closes to 180 deg
         print("[>] Pipe door closed (180 deg). Item is now on the turntable.")
 
-        # --- Now ask operator to close the box lid ---
+        # --- Ask operator to close the box lid ---
         print("\n[>] Close the box lid tightly.")
         print("[>] Press [Enter] when box is sealed and ready for detection...", end="", flush=True)
         try:
@@ -399,32 +414,45 @@ def run_scan(motor:   "StepperMotor",
         except EOFError:
             pass
 
+    # Produce identification loop (item is ALREADY inside the box on turntable!):
+    while produce_name is None:
+        print("\n[>] Detecting produce on turntable with camera...")
         detected, confidence = detect_produce(camera, lights)
 
         if detected is None:
             # Could not identify any supported produce
             print("\n[!] CANNOT IDENTIFY PRODUCE.")
             print("[!] Supported items: Tomato, Apple, Eggplant")
-            print("[!] Make sure the produce is centred on the turntable and visible.")
-            print("    1. Try scanning/detecting again")
-            print("    2. Select produce manually")
+            print("[!] Item is on the turntable. What would you like to do?")
+            print("    1. Rescan item on turntable (retake detection photo)")
+            print("    2. Rotate turntable 45 deg & rescan")
+            print("    3. Select produce manually")
             try:
-                choice = input("Select [1/2] (Default 1 = Try again): ").strip()
+                choice = input("Select [1/2/3] (Default 1 = Rescan): ").strip()
             except EOFError:
                 choice = "1"
+
             if choice == "2":
+                print("[>] Rotating turntable 45 degrees to present a different angle...")
+                motor.advance_45_degrees()
+                continue
+            elif choice == "3":
                 print("\nSelect Produce:")
                 print("  1. Tomato\n  2. Apple\n  3. Eggplant")
                 sel = input("Enter number [1-3]: ").strip()
                 mapping = {"1": "Tomato", "2": "Apple", "3": "Eggplant"}
                 produce_name = mapping.get(sel, "Tomato")
+                display.show_item_detected(produce_name)
                 break
-            continue  # Loop back to Step B
+            else:
+                # Option 1: Just rescan on the turntable!
+                continue
 
         if confidence >= 70:
             # Auto-proceed -- high confidence
             print(f"\n[>] Detected: {detected}  ({confidence}% confidence) -- proceeding automatically.")
             produce_name = detected
+            display.show_item_detected(detected)
         else:
             # Low confidence -- ask operator
             print(f"\n[?] Detected: {detected}  ({confidence}% confidence -- LOW)")
@@ -434,9 +462,27 @@ def run_scan(motor:   "StepperMotor",
                 ans = "y"
             if ans in ("", "y", "yes"):
                 produce_name = detected
+                display.show_item_detected(detected)
             else:
-                print("[!] Not confirmed. Remove item and try again.\n")
-                # Loop back to Step B
+                print("\n[!] Not confirmed. What would you like to do?")
+                print("    1. Rescan item on turntable")
+                print("    2. Rotate turntable 45 deg & rescan")
+                print("    3. Select produce manually")
+                try:
+                    choice = input("Select [1/2/3] (Default 1 = Rescan): ").strip()
+                except EOFError:
+                    choice = "1"
+                if choice == "2":
+                    print("[>] Rotating turntable 45 degrees...")
+                    motor.advance_45_degrees()
+                elif choice == "3":
+                    print("\nSelect Produce:")
+                    print("  1. Tomato\n  2. Apple\n  3. Eggplant")
+                    sel = input("Enter number [1-3]: ").strip()
+                    mapping = {"1": "Tomato", "2": "Apple", "3": "Eggplant"}
+                    produce_name = mapping.get(sel, "Tomato")
+                    display.show_item_detected(produce_name)
+                    break
 
     log.info("Produce confirmed: %s", produce_name)
     display.show_scanning(stop=0, total=NUM_SCAN_STOPS)
@@ -461,6 +507,9 @@ def run_scan(motor:   "StepperMotor",
 
                 sys.stdout.write(f"\r    [Incubating] {elapsed:3d}s / {inc_total}s | Gas: {cur_k} | {cur_t} | {cur_h}  ")
                 sys.stdout.flush()
+
+                if elapsed % 2 == 0:
+                    display.show_incubating(remaining)
 
                 if remaining <= 0:
                     break

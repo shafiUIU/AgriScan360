@@ -55,7 +55,8 @@ MOSFET_UV_HOLD_SEC    = 5.0         # UV-A LED ON hold time in MOSFET auto mode 
 # -- Gas Sensor & Chamber Settings --------------------------------------------
 CHAMBER_VOLUME_LITERS    = 27.0  # 27L closed container volume
 BME688_I2C_ADDRESSES     = [0x77, 0x76]  # Auto-probes both Bosch I2C addresses
-GAS_BASELINE_READS       = 10    # baseline averaging count
+GAS_EMPTY_BOX_SNIFF_SEC  = 60    # 1 minute (60s) empty box clean-air baseline sniff
+GAS_BASELINE_READS       = 10    # baseline averaging count (fallback)
 GAS_BASELINE_DELAY       = 0.5   # seconds between baseline reads
 GAS_SNIFF_INTERVAL_SEC   = 0.5   # continuous sniffing sample interval during scan
 GAS_DELTA_THRESHOLD      = 5.0   # kOhm drop indicating high rot suspicion

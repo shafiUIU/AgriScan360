@@ -31,6 +31,7 @@ except ImportError:
 
 from config import (
     BME688_I2C_ADDRESSES,
+    GAS_EMPTY_BOX_SNIFF_SEC,
     GAS_BASELINE_READS, GAS_BASELINE_DELAY,
     GAS_SNIFF_INTERVAL_SEC, GAS_DELTA_THRESHOLD,
     CHAMBER_VOLUME_LITERS
@@ -255,20 +256,73 @@ class GasSensor:
             timestamp=now,
         )
 
-    #    Baseline Calibration                                                   
+    #    Hotplate Pre-Heat & Baseline Calibration                               
+    def heatup_twice(self):
+        """
+        Pre-heats the BME688 hotplate twice in rapid succession at 320C:
+          - Pulse 1: Burns off accumulated surface moisture and stale VOCs from when the box was open.
+          - Pulse 2: Thermal stabilization pulse to reach equilibrium and lock in heat_stable quickly,
+                     saving minutes of warm-up drift time.
+        """
+        if self.simulate or not self.installed or not self._sensor:
+            log.info("[Simulated] BME688 hotplate dual pre-heat complete (2 cycles).")
+            return
 
-    def calibrate_baseline(self) -> GasReading:
-        """Read baseline gas resistance before fruit scan."""
+        log.info("BME688: Starting dual hotplate pre-heat sequence (2 cycles at 320C)...")
+        for cycle in (1, 2):
+            label = "Burn-off" if cycle == 1 else "Thermal Stabilization"
+            log.info("  -> Heat-up cycle %d/2 (%s pulse)...", cycle, label)
+            for attempt in range(15):
+                if self._sensor.get_sensor_data() and getattr(self._sensor.data, 'heat_stable', False):
+                    res_k = getattr(self._sensor.data, 'gas_resistance', 0.0) / 1000.0
+                    log.info("     Cycle %d heat stable (gas: %.1f kOhm)", cycle, res_k)
+                    break
+                time.sleep(0.1)
+            time.sleep(0.2)
+        log.info("BME688: Dual heat-up complete. Sensor hotplate is conditioned and ready.")
+
+    def calibrate_baseline(self, duration_sec: int = GAS_EMPTY_BOX_SNIFF_SEC, progress_cb=None) -> GasReading:
+        """
+        Read baseline gas resistance inside the empty 27L chamber over duration_sec (default 60s / 1 min).
+        Executes a dual hotplate pre-heat first to burn off contaminants and save stabilization time.
+        """
         if not self.installed:
             self._baseline = GasReading(timestamp=time.time())
             return self._baseline
 
-        log.info("Calibrating BME688 baseline inside 27L chamber...")
-        readings = [self._read_once() for _ in range(GAS_BASELINE_READS)]
-        avg_temp = sum(r.temperature for r in readings) / len(readings)
-        avg_hum  = sum(r.humidity for r in readings) / len(readings)
-        avg_pres = sum(r.pressure for r in readings) / len(readings)
-        avg_gas  = sum(r.gas_ohms for r in readings) / len(readings)
+        # Heat up BME twice to stabilize quickly and burn off contaminants
+        self.heatup_twice()
+
+        log.info("Calibrating BME688 baseline inside empty 27L chamber (%ds sniff)...", duration_sec)
+        readings = []
+        t_start = time.time()
+
+        while True:
+            elapsed = time.time() - t_start
+            remaining = max(0, int(duration_sec - elapsed))
+            r = self._read_once()
+            readings.append(r)
+
+            if progress_cb:
+                progress_cb(int(elapsed), remaining, r)
+
+            if elapsed >= duration_sec:
+                break
+            time.sleep(GAS_SNIFF_INTERVAL_SEC)
+
+        if not readings:
+            readings = [self._read_once()]
+
+        t_end = time.time()
+        # Focus strictly on the last 5 seconds of data for baseline calculation
+        last_5s_readings = [r for r in readings if r.timestamp >= (t_end - 5.0)]
+        if len(last_5s_readings) < 3:
+            last_5s_readings = readings[-5:] if len(readings) >= 5 else readings
+
+        avg_temp = sum(r.temperature for r in last_5s_readings) / len(last_5s_readings)
+        avg_hum  = sum(r.humidity for r in last_5s_readings) / len(last_5s_readings)
+        avg_pres = sum(r.pressure for r in last_5s_readings) / len(last_5s_readings)
+        avg_gas  = sum(r.gas_ohms for r in last_5s_readings) / len(last_5s_readings)
 
         self._baseline = GasReading(
             temperature=round(avg_temp, 1),
@@ -277,8 +331,8 @@ class GasSensor:
             gas_ohms=round(avg_gas, 1),
             timestamp=time.time(),
         )
-        log.info("BME688 Baseline: %.1f kOhm | Temp: %.1fC | Humidity: %.1f%%",
-                 self._baseline.gas_kohms, self._baseline.temperature, self._baseline.humidity)
+        log.info("BME688 Baseline: %.1f kOhm (averaged over last 5s, %d samples) | Temp: %.1fC | Humidity: %.1f%%",
+                 self._baseline.gas_kohms, len(last_5s_readings), self._baseline.temperature, self._baseline.humidity)
         return self._baseline
 
     #    Continuous Sniffing (Background Thread)                                

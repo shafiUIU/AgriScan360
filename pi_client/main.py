@@ -62,6 +62,7 @@ from gas_sensor import GasSensor, ScanGasResult
 from camera     import CameraController
 from display    import OLEDDisplay
 from uploader   import ScanUploader
+from servo      import PipeDoor
 import config as cfg
 from config     import SUPPORTED_PRODUCE, NUM_SCAN_STOPS, CHAMBER_VOLUME_LITERS
 
@@ -305,11 +306,12 @@ def run_scan(motor:   "StepperMotor",
              camera:  "CameraController",
              gas:     "GasSensor",
              display: "OLEDDisplay",
-             uploader: "ScanUploader") -> dict:
+             uploader: "ScanUploader",
+             door:    "PipeDoor") -> dict:
     """
     Execute one complete AgriScan 360 cycle:
       Step A -- Empty-box BME688 baseline calibration
-      Step B -- Place produce, close box, auto-detect produce type
+      Step B -- Drop produce through pipe, auto-detect produce type
       Step C -- 8-stop 360-deg turntable scan (MOSFET: fully automatic / Manual: Enter-per-stop)
       Step D -- Gas analytics, upload, per-produce freshness result
     """
@@ -369,16 +371,29 @@ def run_scan(motor:   "StepperMotor",
     else:
         print("\n[>] BME688 not installed -- skipping gas baseline calibration.")
 
-    # -- Step B: Place produce, auto-detect -----------------------------------
+    # -- Step B: Drop produce through pipe, auto-detect -----------------------
     produce_name = None
     if args.produce:
         produce_name = args.produce.strip().title()
         print(f"\n[>] Produce forced via argument: {produce_name}")
 
     while produce_name is None:
-        print(f"\n[>] STEP B: Place the produce on the turntable.")
-        print("[>] Close the box lid tightly.")
-        print("[>] Press [Enter] when ready for detection...", end="", flush=True)
+        print(f"\n[>] STEP B: Load item into the pipe above the turntable.")
+        print("[>] Press [Enter] to OPEN the pipe door (90 deg) and drop item...")
+        try:
+            input()
+        except EOFError:
+            pass
+
+        # --- Pipe door drop sequence ---
+        display.show_item_detected("Dropping...")
+        print("[>] Opening pipe door (90 deg)...")
+        door.drop_item()   # Opens to 90 deg, holds 2s, closes to 180 deg
+        print("[>] Pipe door closed (180 deg). Item is now on the turntable.")
+
+        # --- Now ask operator to close the box lid ---
+        print("\n[>] Close the box lid tightly.")
+        print("[>] Press [Enter] when box is sealed and ready for detection...", end="", flush=True)
         try:
             input()
         except EOFError:
@@ -665,6 +680,7 @@ def main():
     gas      = GasSensor(simulate=SIM)
     camera   = CameraController(simulate=SIM)
     display  = OLEDDisplay(simulate=SIM)
+    door     = PipeDoor(simulate=SIM)
     uploader = ScanUploader()
 
     if SIM:
@@ -683,7 +699,7 @@ def main():
 
     try:
         while True:
-            result = run_scan(motor, lights, camera, gas, display, uploader)
+            result = run_scan(motor, lights, camera, gas, display, uploader, door)
             log.info("Scan session complete: %s", result)
 
             # Brief pause between scans -- gives operator time to see the result
@@ -705,6 +721,7 @@ def main():
         lights.cleanup()
         camera.cleanup()
         display.clear()
+        door.cleanup()
         uploader.close()
         log.info("AgriScan 360 shutdown complete.")
 

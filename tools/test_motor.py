@@ -169,6 +169,25 @@ def print_wiring_reference():
     print("============================================================\n")
 
 
+def test_door_servo():
+    """Tests the SG90 micro servo door (Closed 180 deg -> Open 90 deg -> 2s -> Closed 180 deg)."""
+    try:
+        from gpiozero import AngularServo
+        print("\n--- TEST 7: SG90 Pipe Door Servo (GPIO 23) ---")
+        servo = AngularServo(23, min_angle=0, max_angle=180, min_pulse_width=0.0005, max_pulse_width=0.0024)
+        print("1. Opening door to 90 deg (OPEN)...")
+        servo.angle = 90
+        time.sleep(2.0)
+        print("   -> Door held open for 2 seconds.")
+        print("2. Closing door back to 180 deg (CLOSED)...")
+        servo.angle = 180
+        time.sleep(0.8)
+        servo.value = None
+        print("   -> Door is now CLOSED (180 deg).\n")
+    except Exception as exc:
+        print(f"Servo test error: {exc}")
+
+
 def main():
     print_wiring_reference()
     if not GPIO_OK:
@@ -179,18 +198,19 @@ def main():
     step_pin, dir_pin, enable_pin = get_motor_pins()
 
     while True:
-        print("\n+-- Stepper Motor Diagnostic Menu ------------------+")
+        print("\n+-- Stepper & Servo Motor Diagnostic Menu ----------+")
         print("|  1. Test Coil Lock (Check if driver energizes)   |")
         print("|  2. Single Step (Click test)                     |")
         print("|  3. 25 Steps (45 Degree Scan Stop)               |")
         print("|  4. 200 Steps (Full 360 Degree Revolution)       |")
         print("|  5. Continuous Rotation (Speed / Stall Test)     |")
         print("|  6. Print Wiring Diagram & Troubleshooting Guide |")
+        print("|  7. Test SG90 Pipe Door (Open 90 deg -> 2s -> 180)|")
         print("|  0. Exit                                         |")
         print("+---------------------------------------------------+")
 
         try:
-            choice = input("Select an option [0-6]: ").strip()
+            choice = input("Select an option [0-7]: ").strip()
         except (KeyboardInterrupt, EOFError):
             break
 
@@ -206,10 +226,12 @@ def main():
             test_continuous(step_pin, dir_pin, enable_pin)
         elif choice == "6":
             print_wiring_reference()
+        elif choice == "7":
+            test_door_servo()
         elif choice in ("0", "q", "exit"):
             break
         else:
-            print("Invalid option. Enter 0-6.")
+            print("Invalid option. Enter 0-7.")
 
     # Cleanup
     if GPIO_OK:

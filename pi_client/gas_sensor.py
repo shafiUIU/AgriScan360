@@ -48,29 +48,13 @@ from config import (
 #   ROTTEN     : ratio >= midr_r   OR  delta >= midr_d
 PRODUCE_GAS_PROFILES = {
     # Tomatoes release VOCs (hexanal, ethanol) quickly once overripe.
-    "Tomato": {
-        "FRESH":      (8.0,  3.0),
-        "MID_FRESH":  (15.0, 5.5),
-        "MID_ROTTEN": (25.0, 9.0),
-    },
+    "Tomato":   {"ROTTEN": (15.0, 5.5)},
     # Apples emit ethylene-related VOCs; slightly higher baseline acceptable.
-    "Apple": {
-        "FRESH":      (10.0, 4.0),
-        "MID_FRESH":  (18.0, 7.0),
-        "MID_ROTTEN": (28.0, 11.0),
-    },
+    "Apple":    {"ROTTEN": (18.0, 7.0)},
     # Eggplant decays more subtly -- lower thresholds catch early rot faster.
-    "Eggplant": {
-        "FRESH":      (6.0,  2.5),
-        "MID_FRESH":  (12.0, 4.5),
-        "MID_ROTTEN": (20.0, 7.5),
-    },
+    "Eggplant": {"ROTTEN": (12.0, 4.5)},
     # Generic fallback for any unsupported produce
-    "default": {
-        "FRESH":      (8.0,  3.5),
-        "MID_FRESH":  (16.0, 6.0),
-        "MID_ROTTEN": (24.0, 9.5),
-    },
+    "default":  {"ROTTEN": (16.0, 6.0)},
 }
 
 
@@ -79,14 +63,12 @@ def classify_gas_freshness(produce_name: str, gas_ratio_pct: float,
     """
     Classify freshness of a scanned produce using per-produce VOC gas profiles.
 
-    Returns one of: "FRESH", "MID_FRESH", "MID_ROTTEN", "ROTTEN"
+    Returns: "HEALTHY" or "ROTTEN"
     Falls back to 'default' profile if produce_name not in PRODUCE_GAS_PROFILES.
     """
     profile = PRODUCE_GAS_PROFILES.get(produce_name.title(),
                                         PRODUCE_GAS_PROFILES["default"])
-    fresh_r,    fresh_d    = profile["FRESH"]
-    midf_r,     midf_d     = profile["MID_FRESH"]
-    midr_r,     midr_d     = profile["MID_ROTTEN"]
+    rotten_r, rotten_d = profile["ROTTEN"]
 
     # Slope modifier: steep negative confirms active decomposition -> upgrade severity
     slope_boost = 0.0
@@ -97,14 +79,9 @@ def classify_gas_freshness(produce_name: str, gas_ratio_pct: float,
 
     effective_ratio = gas_ratio_pct + slope_boost
 
-    if effective_ratio >= midr_r or delta_kohms >= midr_d:
+    if effective_ratio >= rotten_r or delta_kohms >= rotten_d:
         return "ROTTEN"
-    elif effective_ratio >= midf_r or delta_kohms >= midf_d:
-        return "MID_ROTTEN"
-    elif effective_ratio >= fresh_r or delta_kohms >= fresh_d:
-        return "MID_FRESH"
-    else:
-        return "FRESH"
+    return "HEALTHY"
 
 
 

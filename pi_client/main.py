@@ -652,14 +652,14 @@ def run_scan(motor:   "StepperMotor",
 def prompt_ground_truth_correction(assumed_status: str) -> str:
     """
     Operator Ground-Truth Feedback Loop:
-    The AI system assumes a condition ('FRESH', 'MID_FRESH', 'MID_ROTTEN', 'ROTTEN').
+    The AI system assumes a condition ('HEALTHY' or 'ROTTEN').
     The operator inspects the produce and either confirms or corrects the assumption.
     This ground-truth label is recorded for training the user's personal models.
     """
-    options = ["FRESH", "MID_FRESH", "MID_ROTTEN", "ROTTEN"]
+    options = ["HEALTHY", "ROTTEN"]
     clean_assumed = assumed_status.upper().strip()
     if clean_assumed not in options:
-        clean_assumed = "FRESH"
+        clean_assumed = "HEALTHY"
 
     print("\n" + "-" * 62)
     print("  [GROUND TRUTH VERIFICATION & DATASET LABELING]")
@@ -680,7 +680,7 @@ def prompt_ground_truth_correction(assumed_status: str) -> str:
         print(f"    {idx}. {opt}")
     while True:
         try:
-            sel = input("  Enter number [1-4] (or press Enter to keep assumption): ").strip()
+            sel = input("  Enter number [1-2] (or press Enter to keep assumption): ").strip()
             if sel == "":
                 return clean_assumed
             val = int(sel)
@@ -690,7 +690,7 @@ def prompt_ground_truth_correction(assumed_status: str) -> str:
                 return corrected
         except (ValueError, KeyboardInterrupt):
             pass
-        print("  Invalid selection. Please enter 1, 2, 3, or 4.")
+        print("  Invalid selection. Please enter 1 or 2.")
 
 
 # -----------------------------------------------------------------------------
@@ -719,11 +719,8 @@ def _print_result(produce_name: str, status: str, confidence: float,
     """Print the final scan result banner."""
     # Status emoji mapping (ASCII-safe)
     icons = {
-        "FRESH":      "[FRESH]",
-        "MID_FRESH":  "[MID-FRESH]",
-        "MID_ROTTEN": "[MID-ROTTEN]",
-        "ROTTEN":     "[ROTTEN]",
         "HEALTHY":    "[HEALTHY]",
+        "ROTTEN":     "[ROTTEN]",
         "UNCERTAIN":  "[UNCERTAIN]",
     }
     icon = icons.get(status, "[UNKNOWN]")

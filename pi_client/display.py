@@ -318,26 +318,19 @@ class OLEDDisplay:
         the whole display.
 
         Status values:
-            "FRESH"       -> Shows "HEALTHY" in large centered text
-            "MID_FRESH"   -> Shows "FAIRLY" + "FRESH" stacked
-            "MID_ROTTEN"  -> Shows "EARLY" + "ROT" stacked
-            "ROTTEN"      -> Shows "ROTTEN" in large centered text
-            "HEALTHY"     -> Same as FRESH
-            "UNCERTAIN"   -> Shows "UNCERTAIN"
+            "HEALTHY"   -> Shows "HEALTHY" in large centered text
+            "ROTTEN"    -> Shows "ROTTEN"  in large centered text
+            "UNCERTAIN" -> Shows "UNCERTAIN"
 
         Args:
-            status:     Freshness tier string from AI engine.
+            status:     Freshness string from AI engine (HEALTHY / ROTTEN / UNCERTAIN).
             confidence: 0.0-100.0 confidence percentage.
             gas_delta:  kOhm gas resistance drop (for info line).
         """
         # Map internal status codes to display-friendly labels
         _STATUS_MAP = {
-            "FRESH":      ("HEALTHY",   "  FRESH!"),
-            "MID_FRESH":  ("FAIRLY",    "  FRESH"),
             "HEALTHY":    ("HEALTHY",   "  FRESH!"),
-            "MID_ROTTEN": ("EARLY",     "   ROT"),
             "ROTTEN":     ("ROTTEN",    "  BAD!"),
-            "SEVERE_ROT": ("ROTTEN",    "  BAD!"),
             "UNCERTAIN":  ("UNCERTAIN", ""),
             "UNKNOWN":    ("UNCERTAIN", ""),
         }

@@ -178,16 +178,14 @@ def collect_produce_gas_data(csv_path: str, produce_name: str = None,
     # Select ground-truth condition if not specified
     if not condition:
         print(f"\nSelect Known Condition of this {produce_name} for Ground Truth:")
-        print("  1. FRESH      (firm, freshly bought, no decay)")
-        print("  2. MID_FRESH  (ripe, slight softening, no mould)")
-        print("  3. MID_ROTTEN (soft spots, browning, early spoilage)")
-        print("  4. ROTTEN     (obvious decay, fungal odour, severe rot)")
+        print("  1. HEALTHY  (firm, fresh, no visible decay)")
+        print("  2. ROTTEN   (soft spots, browning, mould, decay, fungal odour)")
         try:
-            c_sel = input("Enter condition [1-4] (Default 1 = FRESH): ").strip()
+            c_sel = input("Enter condition [1-2] (Default 1 = HEALTHY): ").strip()
         except (KeyboardInterrupt, EOFError):
             c_sel = "1"
-        c_map = {"1": "FRESH", "2": "MID_FRESH", "3": "MID_ROTTEN", "4": "ROTTEN"}
-        condition = c_map.get(c_sel, "FRESH")
+        c_map = {"1": "HEALTHY", "2": "ROTTEN"}
+        condition = c_map.get(c_sel, "HEALTHY")
 
     print("\n" + "=" * 64)
     print(f"  COLLECT {produce_name.upper()} GAS DATA (Condition: {condition})")
@@ -642,7 +640,7 @@ def main():
     parser.add_argument("--collect-empty", action="store_true", help="Collect empty box baseline data (no motors/LEDs)")
     parser.add_argument("--collect-fruit", action="store_true", help="Collect produce gas data (no motors/LEDs)")
     parser.add_argument("--fruit", type=str, default=None, help="Target fruit: tomato, apple, or eggplant")
-    parser.add_argument("--condition", type=str, default=None, help="Condition: FRESH, MID_FRESH, MID_ROTTEN, ROTTEN")
+    parser.add_argument("--condition", type=str, default=None, help="Condition: HEALTHY, ROTTEN")
     parser.add_argument("--duration", type=int, default=300, help="Incubation duration in seconds (default: 300s / 5 min)")
     parser.add_argument("--train-empty", action="store_true", help="Train empty closed box baseline profile")
     parser.add_argument("--train-fruit", action="store_true", help="Train fruit freshness model")

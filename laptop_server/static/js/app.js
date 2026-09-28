@@ -58,8 +58,17 @@ function statusBadgeHTML(status) {
 }
 
 function suspicionHTML(level) {
-  const cls = { LOW: 'suspicion-low', MEDIUM: 'suspicion-medium', HIGH: 'suspicion-high' }[level] || 'suspicion-low';
-  return `<span class="gas-suspicion-chip ${cls}">${level || 'LOW'}</span>`;
+  const map = {
+    HEALTHY:       ['suspicion-low',    'GAS: HEALTHY'],
+    ROTTEN:        ['suspicion-high',   'GAS: ROTTEN'],
+    LOW:           ['suspicion-low',    'LOW'],
+    MEDIUM:        ['suspicion-medium', 'MEDIUM'],
+    HIGH:          ['suspicion-high',   'HIGH'],
+    NOT_INSTALLED: ['suspicion-low',    'NO SENSOR'],
+    UNKNOWN:       ['suspicion-low',    'UNKNOWN'],
+  };
+  const [cls, label] = map[(level || '').toUpperCase()] || ['suspicion-low', level || 'UNKNOWN'];
+  return `<span class="gas-suspicion-chip ${cls}">${label}</span>`;
 }
 
 function panelClass(status) {

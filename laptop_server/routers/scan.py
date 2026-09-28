@@ -191,6 +191,8 @@ async def ingest_scan(
     log.info("Scan %d complete: %s (%.1f%%) in %.1fs",
              scan_id, scan.status, scan.confidence, scan.scan_duration_s)
 
+    _auto_sync_csv()
+
     return ScanResult(
         scan_id           = scan_id,
         produce_name      = scan.produce_name,
@@ -208,6 +210,20 @@ async def ingest_scan(
         model_used        = scan.model_used or "rule_based_v1",
         created_at        = scan.created_at,
     )
+
+
+def _auto_sync_csv():
+    """Silently update datasets/bme688_telemetry_dataset.csv from SQLite DB."""
+    try:
+        import sys
+        here = os.path.dirname(os.path.abspath(__file__))
+        root = os.path.dirname(os.path.dirname(here))
+        if root not in sys.path:
+            sys.path.insert(0, root)
+        from tools.export_training_data import export as export_db_to_csv, DB_PATH, DEFAULT_OUT
+        export_db_to_csv(DB_PATH, DEFAULT_OUT, quiet=True)
+    except Exception as exc:
+        log.debug("Auto CSV sync skipped: %s", exc)
 
 
 @router.post("/scan/{scan_id}/ground-truth")
@@ -228,4 +244,7 @@ def set_ground_truth(
     db.commit()
     log.info("Scan %d ground truth set to %s (predicted: %s)",
              scan_id, scan.ground_truth, scan.status)
+
+    _auto_sync_csv()
+
     return {"scan_id": scan_id, "ground_truth": scan.ground_truth, "status": "updated"}

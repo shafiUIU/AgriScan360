@@ -1,5 +1,5 @@
 """
-uploader.py — Pi → Laptop HTTP Client
+uploader.py -- Pi -> Laptop HTTP Client
 =======================================
 Packages 16 captured JPEG images + gas sensor data + metadata into a
 multipart/form-data POST request and sends it to the FastAPI laptop server.
@@ -51,8 +51,8 @@ class ScanUploader:
 
     def upload_scan(
         self,
-        rgb_images: List[bytes],      # 8 RGB JPEG bytes, angles 0°–315°
-        uv_images: List[bytes],       # 8 UV  JPEG bytes, angles 0°–315°
+        rgb_images: List[bytes],      # 8 RGB JPEG bytes, angles 0-315 deg
+        uv_images: List[bytes],       # 8 UV  JPEG bytes, angles 0-315 deg
         gas_result,                    # ScanGasResult dataclass from gas_sensor.py
         produce_name: str = "Unknown",
     ) -> dict:
@@ -61,11 +61,11 @@ class ScanUploader:
 
         Multipart form fields:
             produce_name   : str
-            gas_delta      : float (kΩ drop)
-            rot_suspicion  : str (LOW/MEDIUM/HIGH)
+            gas_delta      : float (kOhm drop)
+            rot_suspicion  : str (HEALTHY / ROTTEN)
             temperature_c  : float
             humidity_pct   : float
-            images         : 16× JPEG files, named rgb_000 … rgb_315 / uv_000 … uv_315
+            images         : 16x JPEG files, named rgb_000 ... rgb_315 / uv_000 ... uv_315
 
         Returns:
             dict with keys: status, confidence, reason, scan_id, gas_delta, rot_suspicion
@@ -84,7 +84,7 @@ class ScanUploader:
             "produce_name":        produce_name,
             "gas_delta":           str(round(gas_result.delta_kohms, 3)),
             "baseline_gas_kohms":  str(round(getattr(gas_result, 'baseline_kohms', 0.0), 2)),
-            "post_scan_gas_kohms": str(round(getattr(gas_result, 'post_scan_gas_kohms', 0.0), 2)),
+            "post_scan_gas_kohms": str(round(getattr(gas_result, 'post_scan_kohms', 0.0), 2)),
             "gas_min_kohms":       str(round(getattr(gas_result, 'gas_min_kohms', 0.0), 2)),
             "gas_max_kohms":       str(round(getattr(gas_result, 'gas_max_kohms', 0.0), 2)),
             "gas_mean_kohms":      str(round(getattr(gas_result, 'gas_mean_kohms', 0.0), 2)),

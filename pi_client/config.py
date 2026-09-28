@@ -50,7 +50,7 @@ JPEG_QUALITY       = 100             # JPEG quality 0-100
 WHITE_WARMUP_SEC   = 0.3            # time to let White LEDs warm up before capture (manual mode)
 UV_WARMUP_SEC      = 0.5            # time to let UV LEDs warm up before capture (manual mode)
 MOSFET_WHITE_HOLD_SEC = 5.0         # White LED ON hold time in MOSFET auto mode (seconds before snap)
-MOSFET_UV_HOLD_SEC    = 5.0         # UV-A LED ON hold time in MOSFET auto mode (seconds before snap)
+MOSFET_UV_HOLD_SEC    = 1.0         # UV-A LED ON hold time in MOSFET auto mode (seconds before snap)
 
 # -- Camera ROI / Center Crop -------------------------------------------------
 # Narrows camera field of view down to the turntable center (crops background walls & chute)

@@ -1,5 +1,5 @@
 """
-tools/export_training_data.py  —  AgriScan 360 Training Data Exporter
+tools/export_training_data.py -- AgriScan 360 Training Data Exporter
 =======================================================================
 Exports ALL scan telemetry from the laptop's SQLite database to a CSV
 file that 'training/train_bme_only.py' can directly read.
@@ -20,17 +20,17 @@ import csv
 import argparse
 from datetime import datetime
 
-# ── Paths ─────────────────────────────────────────────────────────────────────
-HERE       = os.path.dirname(os.path.abspath(__file__))
-ROOT       = os.path.dirname(HERE)
-DB_PATH    = os.path.join(ROOT, "laptop_server", "db", "agriscan360.db")
+# Paths
+HERE        = os.path.dirname(os.path.abspath(__file__))
+ROOT        = os.path.dirname(HERE)
+DB_PATH     = os.path.join(ROOT, "laptop_server", "db", "agriscan360.db")
 DEFAULT_OUT = os.path.join(ROOT, "datasets", "bme688_telemetry_dataset.csv")
 
-# ── CSV column order (matches what train_bme_only.py expects) ─────────────────
+# CSV column order (matches what train_bme_only.py expects)
 FIELDNAMES = [
     "scan_id",
     "fruit_type",
-    "condition",          # ground_truth if available, else status
+    "condition",           # ground_truth if available, else status
     "predicted_condition", # AI's original prediction (status)
     "timestamp",
     "temperature_c",
@@ -53,11 +53,12 @@ FIELDNAMES = [
 ]
 
 
-def export(db_path: str, out_path: str, only_labelled: bool = False, stats_only: bool = False):
+def export(db_path: str = DB_PATH, out_path: str = DEFAULT_OUT, only_labelled: bool = False, stats_only: bool = False, quiet: bool = False):
     if not os.path.exists(db_path):
-        print(f"[!] Database not found at: {db_path}")
-        print("    Make sure the laptop server has been run at least once.")
-        sys.exit(1)
+        if not quiet:
+            print(f"[!] Database not found at: {db_path}")
+            print("    Make sure the laptop server has been run at least once.")
+        return
 
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
@@ -110,41 +111,43 @@ def export(db_path: str, out_path: str, only_labelled: bool = False, stats_only:
         img_counts[sid][irow["light_type"]] = irow["cnt"]
     conn2.close()
 
-    # ── Stats summary ──────────────────────────────────────────────────────────
-    print("\n" + "=" * 62)
-    print("  AgriScan 360 — Training Data Export Summary")
-    print("=" * 62)
-    print(f"  Database          : {db_path}")
-    print(f"  Total Scans       : {total}")
-    print(f"  Ground-Truth Set  : {labelled}  (rows with your verified label)")
-    print(f"  Unlabelled        : {unlabelled} (AI prediction used as label)")
+    if not quiet:
+        print("\n" + "=" * 62)
+        print("  AgriScan 360 -- Training Data Export Summary")
+        print("=" * 62)
+        print(f"  Database          : {db_path}")
+        print(f"  Total Scans       : {total}")
+        print(f"  Ground-Truth Set  : {labelled}  (rows with your verified label)")
+        print(f"  Unlabelled        : {unlabelled} (AI prediction used as label)")
 
-    from collections import Counter
-    fruit_counts = Counter(r["produce_name"].lower() if r["produce_name"] else "unknown" for r in rows)
-    label_counts = Counter(
-        (r["ground_truth"] or r["status"] or "UNKNOWN").upper()
-        for r in rows
-    )
-    print(f"\n  Produce breakdown:")
-    for fruit, cnt in sorted(fruit_counts.items()):
-        print(f"    {fruit:<12} : {cnt} scans")
-    print(f"\n  Label breakdown (condition to train on):")
-    for lbl, cnt in sorted(label_counts.items()):
-        print(f"    {lbl:<14}: {cnt} rows")
-    print("=" * 62 + "\n")
+        from collections import Counter
+        fruit_counts = Counter(r["produce_name"].lower() if r["produce_name"] else "unknown" for r in rows)
+        label_counts = Counter(
+            (r["ground_truth"] or r["status"] or "UNKNOWN").upper()
+            for r in rows
+        )
+        print(f"\n  Produce breakdown:")
+        for fruit, cnt in sorted(fruit_counts.items()):
+            print(f"    {fruit:<12} : {cnt} scans")
+        print(f"\n  Label breakdown (condition to train on):")
+        for lbl, cnt in sorted(label_counts.items()):
+            print(f"    {lbl:<14}: {cnt} rows")
+        print("=" * 62 + "\n")
 
     if stats_only:
         return
 
     if total == 0:
-        print("[!] No completed scans in the database yet. Collect some scans first.")
+        if not quiet:
+            print("[!] No completed scans in the database yet. Collect some scans first.")
         return
 
     if only_labelled and labelled == 0:
-        print("[!] No ground-truth labelled rows found. Use main.py Step E to label scans.")
+        if not quiet:
+            print("[!] No ground-truth labelled rows found. Use main.py to label scans.")
         return
 
-    # ── Export CSV ─────────────────────────────────────────────────────────────
+    # Export CSV
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     written = 0
 
@@ -160,7 +163,7 @@ def export(db_path: str, out_path: str, only_labelled: bool = False, stats_only:
             condition = gt if gt else status
 
             if only_labelled and not gt:
-                continue  # Skip rows that the operator hasn't confirmed yet
+                continue
 
             sid = row["id"]
             imgs = img_counts.get(sid, {"rgb": 8, "uv": 8})
@@ -191,11 +194,12 @@ def export(db_path: str, out_path: str, only_labelled: bool = False, stats_only:
             })
             written += 1
 
-    print(f"[+] Exported {written} rows to:")
-    print(f"    {out_path}")
-    print(f"\n[>] Next step: run the trainer:")
-    print(f"    python training/train_bme_only.py")
-    print()
+    if not quiet:
+        print(f"[+] Exported {written} rows to:")
+        print(f"    {out_path}")
+        print(f"\n[>] Next step: run the trainer:")
+        print(f"    python training/train_bme_only.py")
+        print()
 
 
 def main():
@@ -213,6 +217,7 @@ def main():
         out_path=args.out,
         only_labelled=args.only_labelled,
         stats_only=args.stats,
+        quiet=False,
     )
 
 

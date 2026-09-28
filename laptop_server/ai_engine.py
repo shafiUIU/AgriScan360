@@ -27,10 +27,17 @@ from typing import List, Tuple, Optional
 
 log = logging.getLogger(__name__)
 
+# NumPy
+try:
+    import numpy as np
+    NUMPY_AVAILABLE = True
+except ImportError:
+    NUMPY_AVAILABLE = False
+    np = None
+
 # Optional: OpenCV for image analysis
 try:
     import cv2
-    import numpy as np
     CV2_AVAILABLE = True
 except ImportError:
     CV2_AVAILABLE = False
@@ -72,12 +79,11 @@ class ImageAnalyzer:
     @staticmethod
     def _load_as_array(jpeg_bytes: bytes):
         """Load JPEG bytes into an RGB numpy array."""
-        if CV2_AVAILABLE:
+        if CV2_AVAILABLE and np is not None:
             arr = np.frombuffer(jpeg_bytes, np.uint8)
             bgr = cv2.imdecode(arr, cv2.IMREAD_COLOR)
             return cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-        elif PIL_AVAILABLE:
-            import numpy as np
+        elif PIL_AVAILABLE and np is not None:
             img = Image.open(io.BytesIO(jpeg_bytes)).convert("RGB")
             return np.array(img)
         return None
@@ -86,7 +92,7 @@ class ImageAnalyzer:
     def analyze_rgb(jpeg_bytes: bytes) -> dict:
         """
         Analyse a white-light (RGB) image for surface rot indicators.
-        Returns feature dict with rot_score (0–1).
+        Returns feature dict with rot_score (0-1).
         """
         features = {
             "dark_pixel_ratio": 0.0,
@@ -100,7 +106,6 @@ class ImageAnalyzer:
         if arr is None:
             return features
 
-        import numpy as np
         r, g, b = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
 
         # Dark pixel ratio — very dark patches suggest surface rot / necrosis
@@ -153,7 +158,6 @@ class ImageAnalyzer:
         if arr is None:
             return features
 
-        import numpy as np
         r, g, b = arr[:, :, 0].astype(float), arr[:, :, 1].astype(float), arr[:, :, 2].astype(float)
 
         # Bright green pixels: green channel dominant, moderate brightness
@@ -230,7 +234,6 @@ class ONNXClassifier:
         if not self.available:
             return "UNKNOWN", 0.0
 
-        import numpy as np
         try:
             arr = ImageAnalyzer._load_as_array(image_bytes)
             if arr is None:
@@ -262,28 +265,18 @@ class ONNXClassifier:
 # Multi-Modal Fusion Classifier (main entry point)
 # =============================================================================
 
-# ── Per-Produce Gas Freshness Profiles (Server-Side) ─────────────────────────
+# Per-produce: single ROTTEN threshold (ratio_pct, delta_kohms)
+# Matches pi_client/gas_sensor.py PRODUCE_GAS_PROFILES exactly.
+# Both values are the ROTTEN boundary: >= either value -> ROTTEN, else HEALTHY.
 PRODUCE_GAS_PROFILES = {
-    "Tomato": {
-        "FRESH":      (8.0,  3.0),
-        "MID_FRESH":  (15.0, 5.5),
-        "MID_ROTTEN": (25.0, 9.0),
-    },
-    "Apple": {
-        "FRESH":      (10.0, 4.0),
-        "MID_FRESH":  (18.0, 7.0),
-        "MID_ROTTEN": (28.0, 11.0),
-    },
-    "Eggplant": {
-        "FRESH":      (6.0,  2.5),
-        "MID_FRESH":  (12.0, 4.5),
-        "MID_ROTTEN": (20.0, 7.5),
-    },
-    "default": {
-        "FRESH":      (8.0,  3.5),
-        "MID_FRESH":  (16.0, 6.0),
-        "MID_ROTTEN": (24.0, 9.5),
-    },
+    # Tomatoes: MID_FRESH threshold from old 4-tier (conservative ROTTEN line)
+    "Tomato":   {"ROTTEN": (15.0, 5.5)},
+    # Apples: slightly higher baseline VOC acceptable
+    "Apple":    {"ROTTEN": (18.0, 7.0)},
+    # Eggplant: subtle decay -- lower threshold catches early rot faster
+    "Eggplant": {"ROTTEN": (12.0, 4.5)},
+    # Generic fallback for any unsupported produce
+    "default":  {"ROTTEN": (16.0, 6.0)},
 }
 
 
@@ -537,7 +530,6 @@ class AIClassifier:
         - Gas sensor (BME688) uses enhanced multi-feature analytics -> p3_score
         - Final fusion: p1*0.40 + p2*0.35 + p3*0.25
         """
-        import numpy as np
 
         LABEL_ROT_SCORE = {
             "HEALTHY":       0.0,
@@ -660,40 +652,34 @@ class AIClassifier:
     @staticmethod
     def _gas_score(gas_delta: float, gas_ratio_pct: float = 0.0, gas_slope_per_sec: float = 0.0, produce_name: str = "default") -> float:
         """
-        Convert gas analytics (delta, percentage drop, slope) to 0–1 rot probability score.
-        Uses PRODUCE_GAS_PROFILES for produce-specific thresholds (Tomato, Apple, Eggplant).
+        Convert gas analytics to 0-1 rot probability score.
+        Uses single ROTTEN threshold per produce (matches pi_client/gas_sensor.py exactly).
+        Returns ~0.05 for HEALTHY, ~0.95 for ROTTEN.
         """
-        profile = PRODUCE_GAS_PROFILES.get((produce_name or "").title(), PRODUCE_GAS_PROFILES["default"])
-        fresh_r, fresh_d = profile["FRESH"]
-        midf_r,  midf_d  = profile["MID_FRESH"]
-        midr_r,  midr_d  = profile["MID_ROTTEN"]
+        profile    = PRODUCE_GAS_PROFILES.get((produce_name or "").title(), PRODUCE_GAS_PROFILES["default"])
+        rotten_r, rotten_d = profile["ROTTEN"]
 
-        if gas_ratio_pct > 0:
-            if gas_ratio_pct >= midr_r:
-                base_score = 0.95
-            elif gas_ratio_pct >= midf_r:
-                base_score = 0.65
-            elif gas_ratio_pct >= fresh_r:
-                base_score = 0.30
-            else:
-                base_score = 0.05
-        else:
-            if gas_delta >= midr_d:
-                base_score = 0.95
-            elif gas_delta >= midf_d:
-                base_score = 0.65
-            elif gas_delta >= fresh_d:
-                base_score = 0.30
-            else:
-                base_score = 0.05
-
-        # Rate of change modifier: steep negative slope confirms active fruit decomposition
+        # Slope modifier: steep negative slope confirms active decomposition
+        slope_boost = 0.0
         if gas_slope_per_sec < -0.15:
-            base_score = min(1.0, base_score + 0.15)
+            slope_boost = 8.0    # equivalent extra ratio points (same as Pi-side)
         elif gas_slope_per_sec < -0.05:
-            base_score = min(1.0, base_score + 0.08)
-        elif gas_slope_per_sec > 0.04 and base_score > 0.2:
-            base_score = max(0.05, base_score - 0.12)
+            slope_boost = 4.0
+
+        effective_ratio = gas_ratio_pct + slope_boost
+
+        if effective_ratio >= rotten_r or gas_delta >= rotten_d:
+            base_score = 0.95
+        else:
+            # Graduated score for mid-range values (still below ROTTEN boundary)
+            # Scales from 0.05 to 0.38 proportionally to how close to threshold
+            if rotten_r > 0 and gas_ratio_pct > 0:
+                proximity = effective_ratio / rotten_r
+            elif rotten_d > 0 and gas_delta > 0:
+                proximity = gas_delta / rotten_d
+            else:
+                proximity = 0.0
+            base_score = round(0.05 + (proximity * 0.33), 3)   # max 0.38 when just below ROTTEN
 
         return round(base_score, 3)
 

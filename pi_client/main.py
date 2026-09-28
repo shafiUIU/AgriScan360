@@ -153,10 +153,16 @@ def _classify_image_bytes(img_bytes: bytes):
         except Exception:
             img = raw_img
 
-        # Crop central 60% region (covers turntable even if fruit rolls off-center)
-        margin_w = int(w * 0.20)
-        margin_h = int(h * 0.20)
-        region = img.crop((margin_w, margin_h, w - margin_w, h - margin_h))
+        # Crop to turntable region for produce classification
+        # If camera already applied ROI crop, trim 10% edges to isolate fruit on turntable.
+        # If camera crop was disabled/bypassed, apply calibrated ROI crop here.
+        if getattr(cfg, "CAMERA_CROP_ENABLED", False):
+            margin_w = int(w * 0.10)
+            margin_h = int(h * 0.10)
+            region = img.crop((margin_w, margin_h, w - margin_w, h - margin_h))
+        else:
+            roi = getattr(cfg, "CAMERA_ROI_CROP", (0.25, 0.41, 0.76, 1.00))
+            region = img.crop((int(w * roi[0]), int(h * roi[1]), int(w * roi[2]), int(h * roi[3])))
 
         # Downsample for fast and noise-smoothed pixel voting
         region = region.resize((160, 120), Image.Resampling.BILINEAR if hasattr(Image, "Resampling") else Image.BILINEAR)

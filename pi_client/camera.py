@@ -1,12 +1,12 @@
 """
-camera.py — Raspberry Pi Camera Module 2 Controller (Picamera2)
+camera.py -- Raspberry Pi Camera Module 2 Controller (Picamera2)
 ================================================================
 Hardware:  RPi Camera Module 2 (Sony IMX219, 8MP, CSI-2 ribbon)
 Library:   picamera2  (pre-installed on RPi OS Bookworm)
 
 Capture strategy per scan stop:
-    1. White light ON  → capture RGB image  → White light OFF
-    2. UV light ON     → capture UV image   → UV light OFF
+    1. White light ON  -> capture RGB image  -> White light OFF
+    2. UV light ON     -> capture UV image   -> UV light OFF
     3. Store both as JPEG bytes in memory
 
 Images are kept as raw JPEG bytes (not saved to disk on Pi).
@@ -27,6 +27,7 @@ except ImportError:
     PICAMERA2_AVAILABLE = False
     log.warning("picamera2 not available. Using simulation mode (white noise images).")
 
+import config as cfg
 from config import CAPTURE_RESOLUTION, JPEG_QUALITY
 
 
@@ -58,7 +59,7 @@ class CameraController:
             time.sleep(1.0)   # Allow AGC/AWB to stabilize
             log.info("Camera started: %s @ %s", CAPTURE_RESOLUTION, "RGB888")
         except Exception as exc:
-            log.error("Camera init failed: %s — switching to simulation mode", exc)
+            log.error("Camera init failed: %s -- switching to simulation mode", exc)
             self._simulate = True
             self._cam = None
 
@@ -76,7 +77,7 @@ class CameraController:
             img.save(buf, format="JPEG", quality=JPEG_QUALITY)
             return buf.getvalue()
         except ImportError:
-            # Absolute fallback: 1×1 valid JPEG
+            # Absolute fallback: 1x1 valid JPEG
             return (
                 b'\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00'
                 b'\xff\xdb\x00C\x00\x08\x06\x06\x07\x06\x05\x08\x07\x07\x07\t\t'
@@ -93,17 +94,47 @@ class CameraController:
         """
         Capture a single JPEG image.
         Assumes the correct light is already ON before calling.
+        Applies CAMERA_ROI_CROP to isolate the turntable center if enabled.
         Returns raw JPEG bytes.
         """
         if self._simulate:
             time.sleep(0.1)   # Simulate capture latency
-            return self._sim_image()
+            from PIL import Image
+            raw_bytes = self._sim_image()
+            if getattr(cfg, "CAMERA_CROP_ENABLED", False) and getattr(cfg, "CAMERA_ROI_CROP", None):
+                roi = cfg.CAMERA_ROI_CROP
+                img = Image.open(io.BytesIO(raw_bytes))
+                w, h = img.size
+                crop_box = (
+                    int(w * roi[0]),
+                    int(h * roi[1]),
+                    int(w * roi[2]),
+                    int(h * roi[3]),
+                )
+                img = img.crop(crop_box)
+                buf = io.BytesIO()
+                img.save(buf, format="JPEG", quality=JPEG_QUALITY)
+                return buf.getvalue()
+            return raw_bytes
 
         try:
             buf = io.BytesIO()
             arr = self._cam.capture_array("main")
             from PIL import Image
             img = Image.fromarray(arr)
+
+            # Apply turntable center ROI crop (removes walls, BME sensor, pipe chute)
+            if getattr(cfg, "CAMERA_CROP_ENABLED", False) and getattr(cfg, "CAMERA_ROI_CROP", None):
+                roi = cfg.CAMERA_ROI_CROP
+                w, h = img.size
+                crop_box = (
+                    int(w * roi[0]),
+                    int(h * roi[1]),
+                    int(w * roi[2]),
+                    int(h * roi[3]),
+                )
+                img = img.crop(crop_box)
+
             img.save(buf, format="JPEG", quality=JPEG_QUALITY)
             return buf.getvalue()
         except Exception as exc:
@@ -117,7 +148,7 @@ class CameraController:
 
         Args:
             lights:      LightController instance
-            stop_index:  Current turntable stop (0–7), used only for logging
+            stop_index:  Current turntable stop (0-7), used only for logging
 
         Returns:
             (rgb_jpeg_bytes, uv_jpeg_bytes)

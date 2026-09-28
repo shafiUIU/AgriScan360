@@ -52,6 +52,13 @@ UV_WARMUP_SEC      = 0.5            # time to let UV LEDs warm up before capture
 MOSFET_WHITE_HOLD_SEC = 5.0         # White LED ON hold time in MOSFET auto mode (seconds before snap)
 MOSFET_UV_HOLD_SEC    = 5.0         # UV-A LED ON hold time in MOSFET auto mode (seconds before snap)
 
+# -- Camera ROI / Center Crop -------------------------------------------------
+# Narrows camera field of view down to the turntable center (crops background walls & chute)
+# Values are normalized fractions (0.0 to 1.0): (left, top, right, bottom)
+# Calibrated from CUTScreenshot: left=25%, top=41%, right=76%, bottom=100%
+CAMERA_CROP_ENABLED = True
+CAMERA_ROI_CROP     = (0.25, 0.41, 0.76, 1.00)
+
 # -- Gas Sensor & Chamber Settings --------------------------------------------
 CHAMBER_VOLUME_LITERS    = 27.0  # 27L closed container volume
 BME688_I2C_ADDRESSES     = [0x77, 0x76]  # Auto-probes both Bosch I2C addresses

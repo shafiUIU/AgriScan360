@@ -517,38 +517,19 @@ def run_scan(motor:   "StepperMotor",
     log.info("Produce confirmed: %s", produce_name)
     display.show_scanning(stop=0, total=NUM_SCAN_STOPS)
 
-    # -- Step C: Start continuous BME sniffing (Incubation + 8-Stop Scan) ----
+    # -- Step C: Start continuous BME sniffing & 8-Stop Scan simultaneously ---
     gas.start_continuous_sniffing()
+    t_inc_start = time.time()
+    inc_total = getattr(cfg, "GAS_PRE_SCAN_INCUBATION_SEC", 180)
 
-    # Pre-scan incubation with live progress feedback
-    if cfg.GAS_PRE_SCAN_INCUBATION_SEC > 0:
-        inc_total = cfg.GAS_PRE_SCAN_INCUBATION_SEC
-        print(f"\n[>] Chamber Sealed: Incubating for {inc_total}s ({inc_total // 60} min) to accumulate VOCs...")
-        print(f"[>] (First 2 minutes are discarded for thermal stabilization; interval: {cfg.GAS_SNIFF_INTERVAL_SEC}s).")
-        t_inc_start = time.time()
-        try:
-            while True:
-                elapsed = int(time.time() - t_inc_start)
-                remaining = max(0, inc_total - elapsed)
-                latest = gas._readings[-1] if gas._readings else None
-                cur_k = f"{latest.gas_kohms:6.2f} kOhm ({int(latest.gas_ohms)} Ohm)" if latest else "measuring..."
-                cur_t = f"{latest.temperature:.1f}C" if latest else "--"
-                cur_h = f"{latest.humidity:.1f}%" if latest else "--"
+    print("\n" + "=" * 62)
+    print(f"  STEP C: SIMULTANEOUS BME SNIFFING & 8-STOP MULTI-SPECTRAL SCAN")
+    print(f"  Produce: {produce_name}  |  Chamber: {CHAMBER_VOLUME_LITERS}L  |  Target Incubation: {inc_total}s")
+    print("=" * 62)
+    print(f"[>] BME688 continuous sniffing active in background thread.")
+    print(f"[>] Turntable and camera will now capture 16 photos WHILE gas accumulates simultaneously.\n")
 
-                sys.stdout.write(f"\r    [Incubating] {elapsed:3d}s / {inc_total}s | Gas: {cur_k} | {cur_t} | {cur_h}  ")
-                sys.stdout.flush()
-
-                if elapsed % 2 == 0:
-                    display.show_incubating(remaining)
-
-                if remaining <= 0:
-                    break
-                time.sleep(1.0)
-        except KeyboardInterrupt:
-            print("\n[!] Incubation skipped by operator.")
-        print("\n[>] Incubation complete. Starting 8-stop multi-spectral scan...")
-
-    log.info("=== Starting scan for %s (Chamber %.1fL) ===", produce_name, CHAMBER_VOLUME_LITERS)
+    log.info("=== Starting simultaneous scan for %s (Chamber %.1fL) ===", produce_name, CHAMBER_VOLUME_LITERS)
     motor.set_direction(clockwise=True)
     motor.enable()
 
@@ -556,7 +537,11 @@ def run_scan(motor:   "StepperMotor",
         for stop in range(NUM_SCAN_STOPS):
             angle = stop * 45
             display.show_scanning(stop=stop, total=NUM_SCAN_STOPS)
-            print(f"\n--- [Stop {stop + 1}/{NUM_SCAN_STOPS}  ({angle} deg)] ---")
+
+            # Live BME reading info during photo stops
+            latest = gas._readings[-1] if gas._readings else None
+            gas_info = f" | Gas: {latest.gas_kohms:6.2f} kOhm" if latest and latest.gas_kohms > 0 else ""
+            print(f"\n--- [Stop {stop + 1}/{NUM_SCAN_STOPS}  ({angle} deg){gas_info}] ---")
 
             # A. White LED ON -> RGB snap -> White LED OFF
             with lights.capture_white(stop_index=stop, angle=angle):
@@ -590,6 +575,38 @@ def run_scan(motor:   "StepperMotor",
     finally:
         motor.disable()
         lights.off_all()
+
+    # -- Complete Remaining Incubation (if any) --------------------------------
+    elapsed_so_far = int(time.time() - t_inc_start)
+    remaining_inc = max(0, inc_total - elapsed_so_far)
+
+    if remaining_inc > 0 and gas.installed:
+        print(f"\n[+] 16 photos captured in {elapsed_so_far}s while sniffing in parallel!")
+        print(f"[>] Completing remaining {remaining_inc}s incubation for VOC accumulation...")
+        print(f"[>] (Press Ctrl+C to skip remaining incubation and proceed to results now)\n")
+        try:
+            while True:
+                elapsed = int(time.time() - t_inc_start)
+                remaining = max(0, inc_total - elapsed)
+                latest = gas._readings[-1] if gas._readings else None
+                cur_k = f"{latest.gas_kohms:6.2f} kOhm ({int(latest.gas_ohms)} Ohm)" if latest else "measuring..."
+                cur_t = f"{latest.temperature:.1f}C" if latest else "--"
+                cur_h = f"{latest.humidity:.1f}%" if latest else "--"
+
+                sys.stdout.write(f"\r    [Incubating] {elapsed:3d}s / {inc_total}s ({remaining:2d}s left) | Gas: {cur_k} | {cur_t} | {cur_h}  ")
+                sys.stdout.flush()
+
+                if elapsed % 2 == 0:
+                    display.show_incubating(remaining)
+
+                if remaining <= 0:
+                    break
+                time.sleep(1.0)
+        except KeyboardInterrupt:
+            print("\n[!] Remaining incubation skipped by operator -- proceeding to results with captured data.")
+        print(f"\n[>] Incubation complete ({inc_total}s total).")
+    else:
+        print(f"\n[+] 16 photos and incubation finished simultaneously ({elapsed_so_far}s total).")
 
     # -- Step D: Stop BME sniffing -- per-produce gas analytics ----------------
     gas_result = gas.stop_continuous_sniffing(produce_name=produce_name)

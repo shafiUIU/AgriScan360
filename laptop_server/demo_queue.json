@@ -1,0 +1,19 @@
+{
+  "active": true,
+  "queue": [
+    {
+      "produce_name": "Tomato",
+      "status": "HEALTHY",
+      "confidence": 70.0,
+      "reason": "Surface RGB reflectance uniform; baseline headspace VOC stability verified.",
+      "rot_suspicion": "HEALTHY"
+    },
+    {
+      "produce_name": "Apple",
+      "status": "ROTTEN",
+      "confidence": 100.0,
+      "reason": "Severe fungal autofluorescence detected under 365nm UV; internal decay gas threshold exceeded.",
+      "rot_suspicion": "ROTTEN"
+    }
+  ]
+}

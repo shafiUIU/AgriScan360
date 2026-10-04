@@ -9,6 +9,7 @@ Runs AI classification, saves to DB, pushes WebSocket event.
 """
 
 import os
+import json
 import time
 import logging
 from datetime import datetime, timezone
@@ -136,31 +137,61 @@ async def ingest_scan(
 
     db.commit()
 
-    #    3. Run AI Classification                                                
-    try:
-        classifier = get_classifier()
-        ai_result  = classifier.classify(
-            rgb_images        = rgb_bytes_list,
-            uv_images         = uv_bytes_list,
-            gas_delta         = gas_delta,
-            rot_suspicion     = rot_suspicion,
-            gas_ratio_pct     = gas_ratio_pct,
-            gas_slope_per_sec = gas_slope_per_sec,
-            produce_name      = scan.produce_name,
-            gas_min_kohms     = gas_min_kohms,
-            gas_mean_kohms    = gas_mean_kohms,
-            gas_std_kohms     = gas_std_kohms,
-            temperature_c     = temperature_c,
-            humidity_pct      = humidity_pct,
-        )
-    except Exception as exc:
-        log.error("AI classification error: %s", exc)
+    #    3. Run AI Classification (with Showcase Demo Mode support)
+    demo_queue_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "demo_queue.json")
+    demo_item = None
+    if os.path.exists(demo_queue_path):
+        try:
+            with open(demo_queue_path, "r", encoding="utf-8") as f:
+                demo_data = json.load(f)
+            if demo_data.get("active") and demo_data.get("queue"):
+                demo_item = demo_data["queue"].pop(0)
+                if not demo_data["queue"]:
+                    demo_data["active"] = False
+                with open(demo_queue_path, "w", encoding="utf-8") as f:
+                    json.dump(demo_data, f, indent=2)
+                log.info("SHOWCASE DEMO MODE APPLIED: %s -> %s (%.1f%%)",
+                         demo_item.get("produce_name"), demo_item["status"], demo_item["confidence"])
+        except Exception as err:
+            log.warning("Could not read demo_queue.json: %s", err)
+
+    if demo_item:
+        if "produce_name" in demo_item:
+            scan.produce_name = demo_item["produce_name"]
         ai_result = {
-            "status":     "UNCERTAIN",
-            "confidence": 50.0,
-            "reason":     f"Classification error: {exc}",
-            "model_used": "error",
+            "status":     demo_item["status"],
+            "confidence": float(demo_item["confidence"]),
+            "reason":     demo_item.get("reason", "Showcase demo inspection evaluation."),
+            "model_used": "showcase_demo",
         }
+        if "rot_suspicion" in demo_item:
+            rot_suspicion = demo_item["rot_suspicion"]
+            scan.rot_suspicion = rot_suspicion
+    else:
+        try:
+            classifier = get_classifier()
+            ai_result  = classifier.classify(
+                rgb_images        = rgb_bytes_list,
+                uv_images         = uv_bytes_list,
+                gas_delta         = gas_delta,
+                rot_suspicion     = rot_suspicion,
+                gas_ratio_pct     = gas_ratio_pct,
+                gas_slope_per_sec = gas_slope_per_sec,
+                produce_name      = scan.produce_name,
+                gas_min_kohms     = gas_min_kohms,
+                gas_mean_kohms    = gas_mean_kohms,
+                gas_std_kohms     = gas_std_kohms,
+                temperature_c     = temperature_c,
+                humidity_pct      = humidity_pct,
+            )
+        except Exception as exc:
+            log.error("AI classification error: %s", exc)
+            ai_result = {
+                "status":     "UNCERTAIN",
+                "confidence": 50.0,
+                "reason":     f"Classification error: {exc}",
+                "model_used": "error",
+            }
 
     #    4. Update Scan record with result                                      
     scan.status       = ai_result["status"]

@@ -52,6 +52,7 @@ parser.add_argument("--produce",     type=str, default=None, help="Force produce
 parser.add_argument("--manual-leds", action="store_true", help="Force manual operator LED switching")
 parser.add_argument("--mosfet",      action="store_true", help="Force automatic MOSFET GPIO LED switching")
 parser.add_argument("--no-loop",     action="store_true", help="Run single scan then exit")
+parser.add_argument("--demo",        action="store_true", help="Run video showcase demo mode (Scan 1: Tomato, Scan 2: Apple)")
 args = parser.parse_args()
 
 SIM = args.simulate
@@ -417,32 +418,55 @@ def run_scan(motor:   "StepperMotor",
 
     # -- Step B: Drop produce through pipe, auto-detect -----------------------
     produce_name = None
-    if args.produce:
+    if getattr(args, "demo", False):
+        step_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".demo_step")
+        step = 1
+        if os.path.exists(step_file):
+            try:
+                with open(step_file, "r") as f:
+                    step = int(f.read().strip())
+            except Exception:
+                step = 1
+        if step == 1:
+            produce_name = "Tomato"
+            next_step = 2
+        else:
+            produce_name = "Apple"
+            next_step = 1
+        try:
+            with open(step_file, "w") as f:
+                f.write(str(next_step))
+        except Exception:
+            pass
+        print(f"\n[DEMO SHOWCASE MODE] Target Produce: {produce_name} (Scan {step} of 2)")
+    elif args.produce:
         produce_name = args.produce.strip().title()
         print(f"\n[>] Produce forced via argument: {produce_name}")
 
     # Item entrance via pipe happens ONCE when entering Step B:
-    if produce_name is None:
-        print(f"\n[>] STEP B: Load item into the pipe above the turntable.")
-        print("[>] Press [Enter] to OPEN the pipe door (90 deg) and drop item...")
-        try:
-            input()
-        except EOFError:
-            pass
+    print(f"\n[>] STEP B: Load item into the pipe above the turntable.")
+    print("[>] Press [Enter] to OPEN the pipe door (180 deg) and drop item...", end="", flush=True)
+    try:
+        input()
+    except EOFError:
+        pass
 
-        # --- Pipe door drop sequence ---
-        display.show_item_detected("Dropping...")
-        print("[>] Opening pipe door (180 deg)...")
-        door.drop_item()   # Opens to 180 deg, holds 2s, closes to 90 deg
-        print("[>] Pipe door closed (90 deg). Item is now on the turntable.")
+    # --- Pipe door drop sequence ---
+    display.show_item_detected("Dropping...")
+    print("\n[>] Opening pipe door (180 deg)...")
+    door.drop_item()   # Opens to 180 deg, holds 2s, closes to 90 deg
+    print("[>] Pipe door closed (90 deg). Item is now on the turntable.")
 
-        # --- Ask operator to close the box lid ---
-        print("\n[>] Close the box lid tightly.")
-        print("[>] Press [Enter] when box is sealed and ready for detection...", end="", flush=True)
-        try:
-            input()
-        except EOFError:
-            pass
+    # --- Ask operator to close the box lid ---
+    print("\n[>] Close the box lid tightly.")
+    print("[>] Press [Enter] when box is sealed and ready for detection...", end="", flush=True)
+    try:
+        input()
+    except EOFError:
+        pass
+
+    if produce_name is not None:
+        display.show_item_detected(produce_name)
 
     # Produce identification loop (item is ALREADY inside the box on turntable!):
     while produce_name is None:

@@ -26,6 +26,7 @@ PIN_LED_UV    = 24   # MOSFET #2 Gate -> 365nm UV-A LED Array
 # SG90 Micro Servo -- Pipe Feed Door
 PIN_SERVO = 23   # PWM Signal -> GPIO 23 (Physical Pin 16)
                  # 90 deg = Door CLOSED, 180 deg = Door OPEN (2s duration)
+                 # Pipe: 7-inch straight PVC section, 3.5-inch inner dia, 90-deg elbow inlet
 
 # -- I2C Devices --------------------------------------------------------------
 # BME688 Gas Sensor  -> SDA=GPIO2 (Pin3), SCL=GPIO3 (Pin5), address 0x77

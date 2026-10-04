@@ -32,6 +32,7 @@ New Scan Flow (v2):
     Step D: BME stops -> per-produce 4-tier freshness result -> upload -> loop to Step A
 """
 
+import os
 import argparse
 import colorsys
 import io

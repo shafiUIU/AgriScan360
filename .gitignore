@@ -62,3 +62,14 @@ datasets/
 *.tar
 *.gz
 *.rar
+
+# ── Video & Large Media (hosted via Google Drive) ─────────────────────────────
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.webm
+Project_Video.mp4
+project_video.mp4
+!*.txt
+
